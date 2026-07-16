@@ -3,6 +3,8 @@ name: Build PocketMind APK
 on:
   push:
     branches: [ main, local-first-v2 ]
+  pull_request:
+    branches: [ main ]
   workflow_dispatch:
 
 permissions:
