@@ -1,6 +1,6 @@
 import React, {useMemo, useRef, useState} from 'react';
 import {Alert, FlatList, KeyboardAvoidingView, Modal, Platform, Pressable, SafeAreaView, StatusBar, StyleSheet, Text, TextInput, View} from 'react-native';
-import {pick, types} from 'react-native-document-picker';
+import {pick} from '@react-native-documents/picker';
 import {askLocalModel, loadLocalModel, stopLocalModel} from './src/services/llama';
 
 type Message = {id: string; role: 'user' | 'assistant'; text: string};
@@ -26,7 +26,7 @@ export default function App() {
 
   const chooseModel = async () => {
     try {
-      const [file] = await pick({type: [types.allFiles], allowMultiSelection: false});
+      const [file] = await pick({allowMultiSelection: false});
       if (!file?.uri || !file.name?.toLowerCase().endsWith('.gguf')) throw new Error('Please choose a .gguf model file.');
       setProgress(0);
       await loadLocalModel(file.uri, setProgress);
