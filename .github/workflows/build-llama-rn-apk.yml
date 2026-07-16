@@ -1,0 +1,67 @@
+name: Build PocketMind llama.rn APK
+
+on:
+  push:
+    branches: [ restore-llama-rn ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"
+
+      - name: Scaffold React Native app
+        run: |
+          npx @react-native-community/cli@latest init PocketMindRN --version 0.82.0 --skip-install
+          cp rn/App.tsx PocketMindRN/App.tsx
+
+      - name: Install runtime dependencies
+        working-directory: PocketMindRN
+        run: |
+          npm install
+          npm install llama.rn@0.12.6 react-native-document-picker@9.3.1 react-native-fs@2.20.0 react-native-markdown-display@7.0.2 react-native-webview@13.16.0
+          node ./node_modules/llama.rn/install/download-native-artifacts.js
+
+      - name: Configure Android app
+        working-directory: PocketMindRN
+        run: |
+          printf '\nnewArchEnabled=true\nandroid.useAndroidX=true\n' >> android/gradle.properties
+          sed -i 's/applicationId "com.pocketmindrn"/applicationId "com.pocketmind.app"/' android/app/build.gradle || true
+          sed -i 's/namespace "com.pocketmindrn"/namespace "com.pocketmind.app"/' android/app/build.gradle || true
+
+      - name: Build standalone APK
+        working-directory: PocketMindRN
+        run: |
+          npx react-native bundle --platform android --dev false --entry-file index.js --bundle-output android/app/src/main/assets/index.android.bundle --assets-dest android/app/src/main/res
+          cd android
+          ./gradlew assembleDebug --stacktrace --no-daemon
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PocketMind-llama-rn-APK
+          path: PocketMindRN/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 30
