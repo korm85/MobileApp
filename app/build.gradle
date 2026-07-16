@@ -5,13 +5,32 @@ plugins {
 android {
     namespace 'me.themishka.pocketmind'
     compileSdk 35
+    ndkVersion '27.2.12479018'
 
     defaultConfig {
         applicationId 'me.themishka.pocketmind'
         minSdk 26
         targetSdk 35
-        versionCode 1
-        versionName '1.0.0'
+        versionCode 4
+        versionName '2.0.0-alpha3'
+
+        ndk {
+            abiFilters 'arm64-v8a'
+        }
+        externalNativeBuild {
+            cmake {
+                cppFlags '-std=c++17 -O3 -fno-finite-math-only -fexceptions -frtti'
+                cFlags '-O3 -fno-finite-math-only'
+                arguments '-DANDROID_STL=c++_shared', '-DGGML_OPENMP=OFF', '-DGGML_NATIVE=OFF', '-DGGML_CPU_ARM_ARCH=armv8-a', '-DLLAMA_CURL=OFF'
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path file('src/main/cpp/CMakeLists.txt')
+            version '3.22.1'
+        }
     }
 
     buildTypes {
@@ -24,5 +43,11 @@ android {
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
+    }
+
+    packagingOptions {
+        jniLibs {
+            useLegacyPackaging true
+        }
     }
 }

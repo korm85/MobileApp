@@ -2,6 +2,8 @@ name: Build PocketMind APK
 
 on:
   push:
+    branches: [ main, local-first-v2 ]
+  pull_request:
     branches: [ main ]
   workflow_dispatch:
 
@@ -14,7 +16,7 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
 
     steps:
       - name: Checkout
@@ -29,21 +31,47 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android SDK packages
-        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - name: Install Android SDK, NDK and CMake
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager \
+            "platforms;android-35" \
+            "build-tools;35.0.0" \
+            "ndk;27.2.12479018" \
+            "cmake;3.22.1"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.7'
 
-      - name: Build installable debug APK
-        run: gradle :app:assembleDebug --stacktrace
+      - name: Build installable ARM64 debug APK
+        shell: bash
+        run: |
+          set +e
+          gradle :app:assembleDebug --stacktrace --no-daemon > native-build.log 2>&1
+          status=$?
+          if [ $status -ne 0 ]; then
+            echo "===== NATIVE BUILD FAILURE ====="
+            grep -E -i "(^|[[:space:]])(error:|fatal error:|CMake Error|FAILURE:|What went wrong|Execution failed|ninja: build stopped|undefined reference)" native-build.log | tail -n 250 || true
+            echo "===== FINAL 250 LOG LINES ====="
+            tail -n 250 native-build.log
+          fi
+          exit $status
+
+      - name: Upload native build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: PocketMind-build-log-${{ github.run_number }}
+          path: native-build.log
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Upload installable APK
         uses: actions/upload-artifact@v4
         with:
-          name: PocketMind-APK
+          name: PocketMind-APK-${{ github.run_number }}
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
