@@ -46,7 +46,7 @@ Java_me_themishka_pocketmind_NativeBridge_runtimeVersion(JNIEnv * env, jclass) {
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_me_themishka_pocketmind_NativeBridge_loadModel(
-        JNIEnv * env, jclass, jint fd, jint contextSize, jint threads) {
+        JNIEnv *, jclass, jint fd, jint contextSize, jint threads) {
     std::lock_guard<std::mutex> lock(g_mutex);
     cleanup_locked();
     g_last_error.clear();
@@ -58,30 +58,37 @@ Java_me_themishka_pocketmind_NativeBridge_loadModel(
         return JNI_FALSE;
     }
 
+    if (lseek(g_model_fd, 0, SEEK_SET) < 0) {
+        g_last_error = "The selected Android document provider does not expose a seekable GGUF file.";
+        cleanup_locked();
+        return JNI_FALSE;
+    }
+
     const std::string path = "/proc/self/fd/" + std::to_string(g_model_fd);
     llama_backend_init();
 
     llama_model_params modelParams = llama_model_default_params();
     modelParams.n_gpu_layers = 0;
-    modelParams.use_mmap = true;
+    modelParams.use_mmap = false;
+    modelParams.use_mlock = false;
     g_model = llama_model_load_from_file(path.c_str(), modelParams);
     if (!g_model) {
-        g_last_error = "The PrismML runtime could not load this GGUF. Verify Q2_0/g64 compatibility and available RAM.";
+        g_last_error = "Prism could not load this GGUF. Close other apps, verify the file is complete, and retry.";
         cleanup_locked();
         return JNI_FALSE;
     }
 
     llama_context_params ctxParams = llama_context_default_params();
-    ctxParams.n_ctx = contextSize > 0 ? (uint32_t) contextSize : 2048;
-    ctxParams.n_batch = 128;
-    ctxParams.n_ubatch = 128;
+    ctxParams.n_ctx = contextSize > 0 ? (uint32_t) contextSize : 1024;
+    ctxParams.n_batch = 64;
+    ctxParams.n_ubatch = 64;
     ctxParams.n_threads = threads > 0 ? threads : 4;
     ctxParams.n_threads_batch = ctxParams.n_threads;
-    ctxParams.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
+    ctxParams.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_DISABLED;
 
     g_ctx = llama_init_from_model(g_model, ctxParams);
     if (!g_ctx) {
-        g_last_error = "Model weights loaded, but the context allocation failed. Reduce context size or free memory.";
+        g_last_error = "Weights loaded, but context allocation failed. Free memory and retry with a smaller context.";
         cleanup_locked();
         return JNI_FALSE;
     }
@@ -123,7 +130,7 @@ Java_me_themishka_pocketmind_NativeBridge_generate(
 
     const char * raw = env->GetStringUTFChars(promptValue, nullptr);
     std::string prompt(raw ? raw : "");
-    env->ReleaseStringUTFChars(promptValue, raw);
+    if (raw) env->ReleaseStringUTFChars(promptValue, raw);
     g_stop = false;
 
     llama_memory_clear(llama_get_memory(g_ctx), true);
