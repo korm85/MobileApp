@@ -1,0 +1,24 @@
+name: Build PocketMind Android APK
+on:
+  push: {branches: [main]}
+  workflow_dispatch:
+permissions: {contents: write}
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: 20}
+      - uses: actions/setup-java@v4
+        with: {distribution: temurin, java-version: '17'}
+      - run: npm install
+      - run: node node_modules/llama.rn/install/download-native-artifacts.js
+      - run: chmod +x android/gradlew && cd android && ./gradlew :app:assembleDebug --no-daemon -PreactNativeArchitectures=arm64-v8a
+      - run: mkdir -p dist && cp android/app/build/outputs/apk/debug/*.apk dist/PocketMind-2.0-chat-arm64-debug.apk
+      - uses: actions/upload-artifact@v4
+        with: {name: PocketMind-2.0-chat-arm64-debug, path: dist/PocketMind-2.0-chat-arm64-debug.apk}
+      - if: github.ref == 'refs/heads/main'
+        env: {GH_TOKEN: '${{ github.token }}'}
+        run: |
+          gh release view pocketmind-v2.0-chat >/dev/null 2>&1 && gh release upload pocketmind-v2.0-chat dist/PocketMind-2.0-chat-arm64-debug.apk --clobber || gh release create pocketmind-v2.0-chat dist/PocketMind-2.0-chat-arm64-debug.apk --title "PocketMind 2.0 Chat" --notes "Android arm64-v8a debug build for Pixel devices."
