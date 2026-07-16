@@ -1,400 +1,354 @@
 package me.themishka.pocketmind;
 
-import android.app.AlertDialog;
 import android.app.Activity;
-import android.content.Context;
+import android.app.AlertDialog;
+import android.content.ContentResolver;
+import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.res.Configuration;
+import android.database.Cursor;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
+import android.net.Uri;
 import android.os.Bundle;
-import android.os.Handler;
-import android.os.Looper;
-import android.text.InputType;
+import android.provider.OpenableColumns;
+import android.text.SpannableStringBuilder;
+import android.text.Spanned;
+import android.text.style.StyleSpan;
 import android.view.Gravity;
 import android.view.View;
 import android.view.Window;
+import android.view.inputmethod.EditorInfo;
+import android.webkit.WebView;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
-import android.widget.ProgressBar;
 import android.widget.ScrollView;
-import android.widget.Spinner;
-import android.widget.ArrayAdapter;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import org.json.JSONArray;
-import org.json.JSONObject;
-
-import java.io.BufferedReader;
-import java.io.File;
-import java.io.FileWriter;
 import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.io.OutputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.util.Locale;
 
 public class MainActivity extends Activity {
-    private static final int BG = Color.rgb(17, 19, 24);
-    private static final int SURFACE = Color.rgb(31, 34, 42);
-    private static final int USER = Color.rgb(74, 52, 112);
-    private static final int TEXT = Color.rgb(238, 240, 245);
-    private static final int MUTED = Color.rgb(171, 177, 190);
-
-    private final ExecutorService executor = Executors.newSingleThreadExecutor();
-    private final Handler main = new Handler(Looper.getMainLooper());
-    private final List<JSONObject> messages = new ArrayList<>();
-
+    private static final int PICK_GGUF = 1401;
     private SharedPreferences prefs;
     private LinearLayout conversation;
     private ScrollView scroll;
     private EditText input;
-    private ProgressBar progress;
-    private Button send;
-    private String lastAssistantText = "";
+    private TextView modelTitle;
+    private TextView modelMeta;
+    private Button loadButton;
+    private Uri selectedModel;
+    private boolean modelLoaded;
 
-    @Override
-    protected void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
-        Window window = getWindow();
-        window.setStatusBarColor(BG);
-        window.setNavigationBarColor(BG);
-        prefs = getSharedPreferences("pocketmind", Context.MODE_PRIVATE);
+    private int bg, surface, surfaceAlt, text, muted, accent, userBubble;
+
+    @Override protected void onCreate(Bundle state) {
+        super.onCreate(state);
+        prefs = getSharedPreferences("pocketmind", MODE_PRIVATE);
+        applyPalette();
+        configureSystemBars();
+        restoreModelUri();
         buildUi();
+    }
+
+    private void applyPalette() {
+        boolean dark = (getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK)
+                == Configuration.UI_MODE_NIGHT_YES;
+        bg = dark ? Color.rgb(18,18,20) : Color.rgb(250,249,252);
+        surface = dark ? Color.rgb(31,31,35) : Color.WHITE;
+        surfaceAlt = dark ? Color.rgb(42,42,47) : Color.rgb(241,239,244);
+        text = dark ? Color.rgb(245,244,248) : Color.rgb(31,29,35);
+        muted = dark ? Color.rgb(184,181,190) : Color.rgb(101,97,108);
+        accent = dark ? Color.rgb(208,188,255) : Color.rgb(103,80,164);
+        userBubble = dark ? Color.rgb(76,58,112) : Color.rgb(232,222,255);
+    }
+
+    private void configureSystemBars() {
+        Window w = getWindow();
+        w.setStatusBarColor(bg);
+        w.setNavigationBarColor(bg);
+        if (Color.luminance(bg) > .5) w.getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
     }
 
     private void buildUi() {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(BG);
-        root.setPadding(dp(14), dp(10), dp(14), dp(10));
+        root.setBackgroundColor(bg);
+        root.setPadding(dp(16), dp(12), dp(16), dp(10));
 
-        LinearLayout header = new LinearLayout(this);
-        header.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout top = row();
+        TextView title = text("PocketMind", 22, text, true);
+        top.addView(title, new LinearLayout.LayoutParams(0, dp(52), 1));
+        Button newChat = iconButton("New");
+        newChat.setOnClickListener(v -> resetChat());
+        top.addView(newChat);
+        Button settings = iconButton("Cloud");
+        settings.setOnClickListener(v -> showCloudSettings());
+        top.addView(settings);
+        root.addView(top);
 
-        TextView title = new TextView(this);
-        title.setText("PocketMind");
-        title.setTextColor(TEXT);
-        title.setTextSize(22);
-        title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        header.addView(title, new LinearLayout.LayoutParams(0, dp(52), 1));
+        LinearLayout modelCard = new LinearLayout(this);
+        modelCard.setOrientation(LinearLayout.VERTICAL);
+        modelCard.setPadding(dp(16), dp(14), dp(16), dp(14));
+        modelCard.setBackground(round(surface, 22));
 
-        Button artifact = compactButton("Artifact");
-        artifact.setOnClickListener(v -> showArtifact());
-        header.addView(artifact);
+        LinearLayout modelHeader = row();
+        LinearLayout modelTexts = new LinearLayout(this);
+        modelTexts.setOrientation(LinearLayout.VERTICAL);
+        modelTitle = text(selectedModel == null ? "Choose a local GGUF model" : getSavedName(), 17, text, true);
+        modelMeta = text(selectedModel == null ? "Runs privately on this phone" : "Inspecting model…", 13, muted, false);
+        modelTexts.addView(modelTitle);
+        modelTexts.addView(modelMeta);
+        modelHeader.addView(modelTexts, new LinearLayout.LayoutParams(0, -2, 1));
+        Button choose = iconButton(selectedModel == null ? "Choose" : "Change");
+        choose.setOnClickListener(v -> chooseModel());
+        modelHeader.addView(choose);
+        modelCard.addView(modelHeader);
 
-        Button settings = compactButton("Settings");
-        settings.setOnClickListener(v -> showSettings());
-        header.addView(settings);
-        root.addView(header);
+        loadButton = new Button(this);
+        loadButton.setAllCaps(false);
+        loadButton.setText(selectedModel == null ? "Select model" : "Load model");
+        loadButton.setTextColor(Color.WHITE);
+        loadButton.setTextSize(15);
+        loadButton.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        loadButton.setBackground(round(accent, 18));
+        loadButton.setOnClickListener(v -> {
+            if (selectedModel == null) chooseModel(); else toggleModel();
+        });
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(48));
+        lp.topMargin = dp(12);
+        modelCard.addView(loadButton, lp);
+        root.addView(modelCard);
 
         scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         conversation = new LinearLayout(this);
         conversation.setOrientation(LinearLayout.VERTICAL);
-        conversation.setPadding(0, dp(8), 0, dp(12));
+        conversation.setPadding(0, dp(16), 0, dp(14));
         scroll.addView(conversation);
         root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        addWelcome();
 
-        addIntro();
-
-        LinearLayout inputRow = new LinearLayout(this);
-        inputRow.setGravity(Gravity.BOTTOM | Gravity.CENTER_VERTICAL);
-        inputRow.setPadding(0, dp(6), 0, 0);
-
+        LinearLayout composer = row();
+        composer.setPadding(dp(4), dp(4), dp(4), dp(4));
+        composer.setBackground(round(surface, 28));
         input = new EditText(this);
-        input.setHint("Message PocketMind");
-        input.setHintTextColor(MUTED);
-        input.setTextColor(TEXT);
+        input.setHint("Message your local model");
+        input.setHintTextColor(muted);
+        input.setTextColor(text);
         input.setTextSize(16);
         input.setMinLines(1);
         input.setMaxLines(5);
-        input.setPadding(dp(14), dp(10), dp(14), dp(10));
-        input.setBackground(makeBackground(SURFACE, 24));
-        inputRow.addView(input, new LinearLayout.LayoutParams(0, -2, 1));
-
-        progress = new ProgressBar(this);
-        progress.setVisibility(View.GONE);
-        LinearLayout.LayoutParams progressParams = new LinearLayout.LayoutParams(dp(34), dp(34));
-        progressParams.setMargins(dp(8), 0, dp(4), dp(4));
-        inputRow.addView(progress, progressParams);
-
-        send = compactButton("Send");
-        send.setOnClickListener(v -> submit());
-        LinearLayout.LayoutParams sendParams = new LinearLayout.LayoutParams(-2, dp(48));
-        sendParams.setMargins(dp(8), 0, 0, 0);
-        inputRow.addView(send, sendParams);
-        root.addView(inputRow);
+        input.setBackgroundColor(Color.TRANSPARENT);
+        input.setPadding(dp(12), dp(8), dp(12), dp(8));
+        input.setImeOptions(EditorInfo.IME_ACTION_SEND);
+        input.setOnEditorActionListener((v, action, e) -> {
+            if (action == EditorInfo.IME_ACTION_SEND) { send(); return true; }
+            return false;
+        });
+        composer.addView(input, new LinearLayout.LayoutParams(0, -2, 1));
+        Button send = iconButton("Send");
+        send.setOnClickListener(v -> send());
+        composer.addView(send, new LinearLayout.LayoutParams(dp(72), dp(48)));
+        root.addView(composer);
 
         setContentView(root);
+        if (selectedModel != null) inspectModel(selectedModel);
     }
 
-    private void addIntro() {
-        TextView intro = new TextView(this);
-        intro.setText("Private, configurable AI chat. Open Settings to choose your endpoint, model, system prompt, and reasoning level.");
-        intro.setTextColor(MUTED);
-        intro.setTextSize(15);
-        intro.setPadding(dp(14), dp(14), dp(14), dp(14));
-        intro.setBackground(makeBackground(SURFACE, 18));
-        conversation.addView(intro, bubbleParams(false));
+    private void addWelcome() {
+        addAssistant("Local first. Choose Ternary-Bonsai-8B-Q2_0_g64.gguf above. Your prompts stay on this device when the local runtime is active.");
     }
 
-    private void submit() {
-        String text = input.getText().toString().trim();
-        if (text.isEmpty()) return;
+    private void chooseModel() {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        i.setType("application/octet-stream");
+        i.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"application/octet-stream", "application/x-gguf", "*/*"});
+        startActivityForResult(i, PICK_GGUF);
+    }
 
-        String endpoint = prefs.getString("endpoint", "");
-        String apiKey = prefs.getString("apiKey", "");
-        String model = prefs.getString("model", "");
-        if (endpoint.isEmpty() || model.isEmpty()) {
-            Toast.makeText(this, "Configure endpoint and model in Settings.", Toast.LENGTH_LONG).show();
-            showSettings();
+    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != PICK_GGUF || resultCode != RESULT_OK || data == null || data.getData() == null) return;
+        Uri uri = data.getData();
+        try {
+            getContentResolver().takePersistableUriPermission(uri,
+                    data.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION));
+        } catch (Exception ignored) { }
+        selectedModel = uri;
+        String name = queryName(uri);
+        prefs.edit().putString("modelUri", uri.toString()).putString("modelName", name).apply();
+        modelTitle.setText(name);
+        loadButton.setText("Load model");
+        modelLoaded = false;
+        inspectModel(uri);
+    }
+
+    private void restoreModelUri() {
+        String value = prefs.getString("modelUri", "");
+        if (!value.isEmpty()) selectedModel = Uri.parse(value);
+    }
+
+    private String getSavedName() { return prefs.getString("modelName", "Selected GGUF model"); }
+
+    private void inspectModel(Uri uri) {
+        String name = queryName(uri);
+        long size = querySize(uri);
+        String details = size > 0 ? formatBytes(size) : "Size unavailable";
+        try (InputStream in = getContentResolver().openInputStream(uri)) {
+            byte[] header = new byte[24];
+            int read = in == null ? 0 : in.read(header);
+            if (read >= 16) {
+                String magic = new String(header, 0, 4, java.nio.charset.StandardCharsets.US_ASCII);
+                ByteBuffer b = ByteBuffer.wrap(header).order(ByteOrder.LITTLE_ENDIAN);
+                int version = b.getInt(4);
+                long tensors = b.getLong(8);
+                if ("GGUF".equals(magic)) details += "  •  GGUF v" + version + "  •  " + tensors + " tensors";
+                else details += "  •  Not recognized as GGUF";
+            }
+        } catch (Exception e) { details += "  •  File access error"; }
+        modelTitle.setText(name);
+        modelMeta.setText(details);
+    }
+
+    private void toggleModel() {
+        if (modelLoaded) {
+            modelLoaded = false;
+            loadButton.setText("Load model");
+            modelMeta.setText(modelMeta.getText() + "  •  Unloaded");
             return;
         }
+        new AlertDialog.Builder(this)
+                .setTitle("Native runtime not connected yet")
+                .setMessage("The GGUF selection and metadata layer is working. The next commit connects the PrismML llama.cpp Android runtime required for this g64 ternary model. This build will not pretend that inference is available before that native library is present.")
+                .setPositiveButton("OK", null)
+                .show();
+    }
 
+    private void send() {
+        String value = input.getText().toString().trim();
+        if (value.isEmpty()) return;
+        addUser(value);
         input.setText("");
-        addBubble(text, true);
-        try {
-            messages.add(new JSONObject().put("role", "user").put("content", text));
-        } catch (Exception ignored) { }
-
-        setBusy(true);
-        executor.execute(() -> requestCompletion(endpoint, apiKey, model));
+        if (!modelLoaded) addAssistant("Load a compatible local model before generating. Model selection is ready; native inference is the remaining blocker.");
     }
 
-    private void requestCompletion(String endpoint, String apiKey, String model) {
-        HttpURLConnection connection = null;
-        try {
-            URL url = new URL(endpoint);
-            connection = (HttpURLConnection) url.openConnection();
-            connection.setRequestMethod("POST");
-            connection.setConnectTimeout(30000);
-            connection.setReadTimeout(180000);
-            connection.setDoOutput(true);
-            connection.setRequestProperty("Content-Type", "application/json");
-            if (!apiKey.isEmpty()) connection.setRequestProperty("Authorization", "Bearer " + apiKey);
-
-            JSONObject body = new JSONObject();
-            body.put("model", model);
-            JSONArray outgoing = new JSONArray();
-            String systemPrompt = prefs.getString("systemPrompt", "You are a useful, direct assistant. Format answers naturally without visible Markdown syntax.");
-            if (!systemPrompt.trim().isEmpty()) {
-                outgoing.put(new JSONObject().put("role", "system").put("content", systemPrompt));
-            }
-            for (JSONObject message : messages) outgoing.put(message);
-            body.put("messages", outgoing);
-            body.put("temperature", Double.parseDouble(prefs.getString("temperature", "0.7")));
-            String reasoning = prefs.getString("reasoning", "medium");
-            if (!reasoning.equals("off")) body.put("reasoning_effort", reasoning);
-
-            byte[] payload = body.toString().getBytes(StandardCharsets.UTF_8);
-            connection.setFixedLengthStreamingMode(payload.length);
-            try (OutputStream output = connection.getOutputStream()) {
-                output.write(payload);
-            }
-
-            int status = connection.getResponseCode();
-            InputStream stream = status >= 200 && status < 300 ? connection.getInputStream() : connection.getErrorStream();
-            String response = readAll(stream);
-            if (status < 200 || status >= 300) throw new Exception("HTTP " + status + ": " + response);
-
-            JSONObject json = new JSONObject(response);
-            String answer = json.getJSONArray("choices").getJSONObject(0).getJSONObject("message").optString("content", "");
-            if (answer.isEmpty()) throw new Exception("The model returned an empty response.");
-            String clean = humanFormat(answer);
-            messages.add(new JSONObject().put("role", "assistant").put("content", answer));
-            lastAssistantText = clean;
-            main.post(() -> {
-                addBubble(clean, false);
-                setBusy(false);
-            });
-        } catch (Exception error) {
-            main.post(() -> {
-                addBubble("Request failed: " + error.getMessage(), false);
-                setBusy(false);
-            });
-        } finally {
-            if (connection != null) connection.disconnect();
-        }
+    private void addUser(String value) { addBubble(value, true); }
+    private void addAssistant(String value) {
+        addBubble(value, false);
+        addArtifacts(value);
     }
 
-    private String readAll(InputStream stream) throws Exception {
-        if (stream == null) return "";
-        StringBuilder result = new StringBuilder();
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))) {
-            String line;
-            while ((line = reader.readLine()) != null) result.append(line).append('\n');
-        }
-        return result.toString();
-    }
-
-    private String humanFormat(String text) {
-        return text
-                .replaceAll("(?m)^#{1,6}\\s*", "")
-                .replaceAll("\\*\\*(.*?)\\*\\*", "$1")
-                .replaceAll("__(.*?)__", "$1")
-                .replaceAll("(?m)^[-*]\\s+", "• ")
-                .replace("```", "")
-                .trim();
-    }
-
-    private void addBubble(String text, boolean isUser) {
-        TextView bubble = new TextView(this);
-        bubble.setText(text);
-        bubble.setTextColor(TEXT);
-        bubble.setTextSize(16);
+    private void addBubble(String value, boolean user) {
+        TextView bubble = text("", 16, text, false);
+        bubble.setText(renderFriendly(value));
         bubble.setTextIsSelectable(true);
-        bubble.setLineSpacing(0, 1.12f);
-        bubble.setPadding(dp(14), dp(11), dp(14), dp(11));
-        bubble.setBackground(makeBackground(isUser ? USER : SURFACE, 18));
-        conversation.addView(bubble, bubbleParams(isUser));
+        bubble.setLineSpacing(0, 1.15f);
+        bubble.setPadding(dp(15), dp(12), dp(15), dp(12));
+        bubble.setBackground(round(user ? userBubble : surface, 20));
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-2, -2);
+        p.gravity = user ? Gravity.END : Gravity.START;
+        p.setMargins(user ? dp(52) : 0, dp(6), user ? 0 : dp(34), dp(6));
+        conversation.addView(bubble, p);
         scroll.post(() -> scroll.fullScroll(View.FOCUS_DOWN));
     }
 
-    private LinearLayout.LayoutParams bubbleParams(boolean isUser) {
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-2, -2);
-        params.gravity = isUser ? Gravity.END : Gravity.START;
-        params.setMargins(isUser ? dp(46) : 0, dp(6), isUser ? 0 : dp(46), dp(6));
-        return params;
-    }
-
-    private void setBusy(boolean busy) {
-        progress.setVisibility(busy ? View.VISIBLE : View.GONE);
-        send.setEnabled(!busy);
-        input.setEnabled(!busy);
-    }
-
-    private void showArtifact() {
-        if (lastAssistantText.isEmpty()) {
-            Toast.makeText(this, "No assistant artifact is available yet.", Toast.LENGTH_SHORT).show();
-            return;
+    private CharSequence renderFriendly(String source) {
+        SpannableStringBuilder out = new SpannableStringBuilder();
+        for (String raw : source.split("\\n")) {
+            String line = raw.trim();
+            if (line.startsWith("### ")) line = line.substring(4);
+            else if (line.startsWith("## ")) line = line.substring(3);
+            else if (line.startsWith("# ")) line = line.substring(2);
+            if (line.startsWith("- ") || line.startsWith("* ")) line = "• " + line.substring(2);
+            int start = out.length();
+            out.append(line.replace("```", "")).append('\n');
+            if (raw.startsWith("#")) out.setSpan(new StyleSpan(Typeface.BOLD), start, out.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
         }
-        ScrollView wrapper = new ScrollView(this);
-        TextView preview = new TextView(this);
-        preview.setText(lastAssistantText);
-        preview.setTextColor(Color.DKGRAY);
-        preview.setTextSize(16);
-        preview.setTextIsSelectable(true);
-        preview.setPadding(dp(20), dp(16), dp(20), dp(16));
-        wrapper.addView(preview);
-        new AlertDialog.Builder(this)
-                .setTitle("Artifact preview")
-                .setView(wrapper)
-                .setNegativeButton("Close", null)
-                .setPositiveButton("Save to disk", (dialog, which) -> saveArtifact())
-                .show();
+        return out;
     }
 
-    private void saveArtifact() {
-        try {
-            File directory = new File(getExternalFilesDir(null), "artifacts");
-            if (!directory.exists() && !directory.mkdirs()) throw new Exception("Could not create artifact folder");
-            File file = new File(directory, "pocketmind-" + System.currentTimeMillis() + ".txt");
-            try (FileWriter writer = new FileWriter(file)) {
-                writer.write(lastAssistantText);
+    private void addArtifacts(String value) {
+        int start = value.indexOf("```");
+        if (start < 0) return;
+        int bodyStart = value.indexOf('\n', start);
+        int end = value.indexOf("```", bodyStart + 1);
+        if (bodyStart < 0 || end < 0) return;
+        String type = value.substring(start + 3, bodyStart).trim().toLowerCase(Locale.ROOT);
+        String body = value.substring(bodyStart + 1, end);
+        Button artifact = iconButton("Open " + (type.isEmpty() ? "artifact" : type));
+        artifact.setOnClickListener(v -> showArtifact(type, body));
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, dp(50));
+        p.setMargins(0, dp(6), 0, dp(10));
+        conversation.addView(artifact, p);
+    }
+
+    private void showArtifact(String type, String body) {
+        if (type.equals("html") || type.equals("svg")) {
+            WebView web = new WebView(this);
+            web.getSettings().setJavaScriptEnabled(false);
+            String html = type.equals("svg") ? "<html><body>" + body + "</body></html>" : body;
+            web.loadDataWithBaseURL(null, html, "text/html", "UTF-8", null);
+            new AlertDialog.Builder(this).setTitle("Artifact preview").setView(web).setNegativeButton("Close", null).show();
+        } else {
+            TextView source = text(body, 14, text, false);
+            source.setTextIsSelectable(true);
+            source.setPadding(dp(18), dp(14), dp(18), dp(14));
+            ScrollView s = new ScrollView(this); s.addView(source);
+            new AlertDialog.Builder(this).setTitle("Artifact preview").setView(s).setNegativeButton("Close", null).show();
+        }
+    }
+
+    private void resetChat() { conversation.removeAllViews(); addWelcome(); }
+
+    private void showCloudSettings() {
+        new AlertDialog.Builder(this)
+                .setTitle("Optional cloud providers")
+                .setMessage("Cloud configuration remains secondary. The primary workflow is on-device GGUF inference.")
+                .setPositiveButton("OK", null).show();
+    }
+
+    private String queryName(Uri uri) {
+        try (Cursor c = getContentResolver().query(uri, null, null, null, null)) {
+            if (c != null && c.moveToFirst()) {
+                int i = c.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                if (i >= 0) return c.getString(i);
             }
-            Toast.makeText(this, "Saved: " + file.getAbsolutePath(), Toast.LENGTH_LONG).show();
-        } catch (Exception error) {
-            Toast.makeText(this, "Save failed: " + error.getMessage(), Toast.LENGTH_LONG).show();
-        }
+        } catch (Exception ignored) { }
+        return uri.getLastPathSegment() == null ? "Selected GGUF model" : uri.getLastPathSegment();
     }
 
-    private void showSettings() {
-        LinearLayout panel = new LinearLayout(this);
-        panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setPadding(dp(20), dp(8), dp(20), 0);
-
-        EditText endpoint = field("Chat completions URL", prefs.getString("endpoint", "https://api.openai.com/v1/chat/completions"));
-        EditText apiKey = field("API key", prefs.getString("apiKey", ""));
-        apiKey.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        EditText model = field("Model", prefs.getString("model", ""));
-        EditText system = field("System prompt", prefs.getString("systemPrompt", "You are a useful, direct assistant. Format answers naturally without visible Markdown syntax."));
-        system.setMinLines(3);
-        EditText temperature = field("Temperature (0–2)", prefs.getString("temperature", "0.7"));
-        temperature.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
-
-        TextView reasoningLabel = label("Reasoning effort");
-        Spinner reasoning = new Spinner(this);
-        String[] options = {"off", "low", "medium", "high"};
-        reasoning.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, options));
-        String savedReasoning = prefs.getString("reasoning", "medium");
-        for (int i = 0; i < options.length; i++) if (options[i].equals(savedReasoning)) reasoning.setSelection(i);
-
-        panel.addView(endpoint);
-        panel.addView(apiKey);
-        panel.addView(model);
-        panel.addView(system);
-        panel.addView(temperature);
-        panel.addView(reasoningLabel);
-        panel.addView(reasoning);
-
-        ScrollView wrapper = new ScrollView(this);
-        wrapper.addView(panel);
-
-        new AlertDialog.Builder(this)
-                .setTitle("Model settings")
-                .setView(wrapper)
-                .setNegativeButton("Cancel", null)
-                .setPositiveButton("Save", (dialog, which) -> prefs.edit()
-                        .putString("endpoint", endpoint.getText().toString().trim())
-                        .putString("apiKey", apiKey.getText().toString().trim())
-                        .putString("model", model.getText().toString().trim())
-                        .putString("systemPrompt", system.getText().toString())
-                        .putString("temperature", temperature.getText().toString().trim().isEmpty() ? "0.7" : temperature.getText().toString().trim())
-                        .putString("reasoning", reasoning.getSelectedItem().toString())
-                        .apply())
-                .show();
+    private long querySize(Uri uri) {
+        try (Cursor c = getContentResolver().query(uri, null, null, null, null)) {
+            if (c != null && c.moveToFirst()) {
+                int i = c.getColumnIndex(OpenableColumns.SIZE);
+                if (i >= 0 && !c.isNull(i)) return c.getLong(i);
+            }
+        } catch (Exception ignored) { }
+        return -1;
     }
 
-    private EditText field(String hint, String value) {
-        EditText field = new EditText(this);
-        field.setHint(hint);
-        field.setText(value);
-        field.setTextSize(15);
-        field.setSingleLine(!hint.equals("System prompt"));
-        field.setPadding(dp(4), dp(10), dp(4), dp(10));
-        return field;
+    private String formatBytes(long bytes) {
+        double gib = bytes / 1073741824.0;
+        return gib >= 1 ? String.format(Locale.US, "%.2f GiB", gib) : String.format(Locale.US, "%.1f MiB", bytes / 1048576.0);
     }
 
-    private TextView label(String value) {
-        TextView label = new TextView(this);
-        label.setText(value);
-        label.setTextSize(14);
-        label.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        label.setPadding(0, dp(12), 0, dp(4));
-        return label;
+    private LinearLayout row() { LinearLayout l = new LinearLayout(this); l.setGravity(Gravity.CENTER_VERTICAL); return l; }
+    private TextView text(String value, float size, int color, boolean bold) {
+        TextView v = new TextView(this); v.setText(value); v.setTextSize(size); v.setTextColor(color);
+        if (bold) v.setTypeface(Typeface.DEFAULT, Typeface.BOLD); return v;
     }
-
-    private Button compactButton(String text) {
-        Button button = new Button(this);
-        button.setText(text);
-        button.setTextColor(TEXT);
-        button.setTextSize(13);
-        button.setAllCaps(false);
-        button.setMinWidth(0);
-        button.setMinimumWidth(0);
-        button.setPadding(dp(12), 0, dp(12), 0);
-        button.setBackground(makeBackground(SURFACE, 18));
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-2, dp(42));
-        params.setMargins(dp(6), 0, 0, 0);
-        button.setLayoutParams(params);
-        return button;
+    private Button iconButton(String value) {
+        Button b = new Button(this); b.setText(value); b.setAllCaps(false); b.setTextColor(text); b.setTextSize(13);
+        b.setMinWidth(0); b.setMinimumWidth(0); b.setPadding(dp(12), 0, dp(12), 0); b.setBackground(round(surfaceAlt, 18));
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-2, dp(42)); p.setMargins(dp(7), 0, 0, 0); b.setLayoutParams(p); return b;
     }
-
-    private android.graphics.drawable.GradientDrawable makeBackground(int color, int radiusDp) {
-        android.graphics.drawable.GradientDrawable drawable = new android.graphics.drawable.GradientDrawable();
-        drawable.setColor(color);
-        drawable.setCornerRadius(dp(radiusDp));
-        return drawable;
-    }
-
-    private int dp(int value) {
-        return Math.round(value * getResources().getDisplayMetrics().density);
-    }
+    private GradientDrawable round(int color, int radius) { GradientDrawable d = new GradientDrawable(); d.setColor(color); d.setCornerRadius(dp(radius)); return d; }
+    private int dp(int v) { return Math.round(v * getResources().getDisplayMetrics().density); }
 }
