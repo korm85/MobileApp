@@ -1,9 +1,11 @@
 import * as SQLite from 'expo-sqlite';
 import Storage from 'expo-sqlite/kv-store';
+import * as SecureStore from 'expo-secure-store';
 import { Artifact, GenerationSettings, Message } from '../types';
 import { DEFAULT_GENERATION_SETTINGS } from '../constants';
 
 const SETTINGS_KEY = 'generation-settings-v1';
+const TAVILY_API_KEY = 'tavily-api-key-v1';
 
 let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
@@ -119,6 +121,8 @@ export async function loadGenerationSettings(): Promise<GenerationSettings> {
       threads: Math.round(numberOrDefault(saved.threads, DEFAULT_GENERATION_SETTINGS.threads, 1, 6)),
       gpuLayers: Math.round(numberOrDefault(saved.gpuLayers, DEFAULT_GENERATION_SETTINGS.gpuLayers, 0, 99)),
       showThinking: saved.showThinking === true,
+      webSearchEnabled: saved.webSearchEnabled === true,
+      webSearchDepth: saved.webSearchDepth === 'advanced' ? 'advanced' : 'basic',
     };
   } catch {
     return { ...DEFAULT_GENERATION_SETTINGS, systemPrompt: '' };
@@ -127,4 +131,23 @@ export async function loadGenerationSettings(): Promise<GenerationSettings> {
 
 export async function saveGenerationSettings(settings: GenerationSettings) {
   await Storage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+}
+
+export async function loadTavilyApiKey() {
+  try {
+    return (await SecureStore.getItemAsync(TAVILY_API_KEY)) ?? '';
+  } catch {
+    return '';
+  }
+}
+
+export async function saveTavilyApiKey(apiKey: string) {
+  const normalized = apiKey.trim();
+  if (normalized) {
+    await SecureStore.setItemAsync(TAVILY_API_KEY, normalized, {
+      keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+    });
+  } else {
+    await SecureStore.deleteItemAsync(TAVILY_API_KEY);
+  }
 }
