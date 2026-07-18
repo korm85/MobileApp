@@ -5,6 +5,9 @@ on:
     branches:
       - codex/local-artifacts-apk
       - codex/pocketmind-complete-apk
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
