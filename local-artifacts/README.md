@@ -1,4 +1,4 @@
-# LocalArtifacts
+# PocketMind
 
 Private, offline-first Android chat and interactive-artifact workspace for Pixel-class phones.
 
@@ -8,6 +8,7 @@ Private, offline-first Android chat and interactive-artifact workspace for Pixel
 - Model manager for Gemma 4 E4B QAT and Qwen 3.5 4B GGUF downloads.
 - SQLite persistence for chats, artifacts, and data saved by artifacts.
 - Offline WebView artifact sandbox for games, dashboards, trackers, and spreadsheets.
+- Optional Tavily web search with an encrypted API-key setting and source context passed to the local model.
 - Light/dark system theme support.
 - Hebrew and English prompts.
 
