@@ -41,6 +41,9 @@ jobs:
       - name: Generate Android project
         run: npx expo prebuild --platform android --no-install
 
+      - name: Restrict native build to Pixel 10a ABI
+        run: sed -i 's/^reactNativeArchitectures=.*/reactNativeArchitectures=arm64-v8a/' android/gradle.properties
+
       - name: Build release APK
         run: ./gradlew assembleRelease
         working-directory: local-artifacts/android
