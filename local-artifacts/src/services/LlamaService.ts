@@ -1,6 +1,8 @@
 import { initLlama, LlamaContext } from 'llama.rn';
 import { ARTIFACT_MODE_INSTRUCTIONS, SYSTEM_PROMPT } from '../constants';
-import { GenerationSettings } from '../types';
+import { ChatSession, GenerationSettings } from '../types';
+
+type ChatControls = Pick<ChatSession, 'showThinking' | 'thinkingEnabled'>;
 
 export type InferenceOptions = {
   contextSize?: number;
@@ -52,21 +54,32 @@ export class LlamaService {
     onToken: (token: string) => void,
     history: Array<{ role: 'user' | 'assistant'; content: string }> = [],
     settings: GenerationSettings,
+    chatControls: ChatControls,
   ) {
     if (!this.context) throw new Error('Load a local model before chatting.');
     const result = await this.context.completion({
       messages: [
-        { role: 'system', content: `${settings.systemPrompt.trim() || SYSTEM_PROMPT}\n\n${ARTIFACT_MODE_INSTRUCTIONS}\n\nCURRENT RESPONSE MODE: ${settings.responseMode.toUpperCase()}` },
+        { role: 'system', content: `${settings.systemPrompt.trim() || SYSTEM_PROMPT}\n\n${ARTIFACT_MODE_INSTRUCTIONS}\n\nCURRENT RESPONSE MODE: ${settings.responseMode.toUpperCase()}
+THINKING MODE: ${chatControls.thinkingEnabled ? 'ON — reason before answering' : 'OFF — answer directly'}
+THINKING VISIBILITY: ${chatControls.showThinking ? 'SHOW' : 'HIDE'}
+` },
         ...history,
         { role: 'user', content: userPrompt },
       ],
       temperature: settings.temperature,
       top_p: settings.topP,
       n_predict: settings.maxTokens,
-      chat_template_kwargs: { preserve_thinking: settings.showThinking },
+      chat_template_kwargs: {
+        enable_thinking: chatControls.thinkingEnabled,
+        preserve_thinking: chatControls.showThinking,
+      },
       stop: ['<|im_end|>', '</s>'],
     }, (data) => onToken(data.token));
     return result.text;
+  }
+
+  async stopGeneration() {
+    if (this.context) await this.context.stopCompletion();
   }
 
   async release() {
