@@ -1,12 +1,13 @@
 {
   "name": "pocketmind",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "private": true,
   "main": "expo/AppEntry.js",
   "scripts": {
     "start": "expo start",
     "android": "expo run:android",
     "prebuild": "expo prebuild --platform android",
+    "prepare-artifact-runtime": "node scripts/generate-artifact-runtime.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "expo lint"
   },
@@ -22,7 +23,19 @@
     "react": "19.2.7",
     "react-native": "0.86.0",
     "react-native-safe-area-context": "~5.8.0",
-    "react-native-webview": "14.0.1"
+    "react-native-webview": "14.0.1",
+    "three": "0.185.1",
+    "echarts": "6.1.0",
+    "d3": "7.9.0",
+    "marked": "18.0.6",
+    "dompurify": "3.4.12",
+    "prismjs": "1.30.0",
+    "katex": "0.18.0",
+    "papaparse": "5.5.4",
+    "jszip": "3.10.1",
+    "dexie": "4.4.4",
+    "fuse.js": "7.5.0",
+    "tweakpane": "4.0.5"
   },
   "devDependencies": {
     "@types/react": "~19.2.2",
