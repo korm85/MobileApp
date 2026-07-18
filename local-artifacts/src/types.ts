@@ -11,12 +11,22 @@ export type ChatSession = {
   thinkingEnabled: boolean;
 };
 
+export type MediaAttachment = {
+  id: string;
+  kind: 'image' | 'audio';
+  uri: string;
+  mimeType: string;
+  name: string;
+  size?: number;
+};
+
 export type Message = {
   id: string;
   sessionId: string;
   sender: Sender;
   content: string;
   createdAt: number;
+  attachments?: MediaAttachment[];
 };
 
 export type Artifact = {
@@ -37,8 +47,17 @@ export type ModelDefinition = {
   filename: string;
   url: string;
   sizeLabel: string;
+  mmprojFilename?: string;
+  mmprojUrl?: string;
+  mmprojSizeLabel?: string;
+  mtpFilename?: string;
+  mtpUrl?: string;
+  mtpSizeLabel?: string;
   recommended?: boolean;
   supportsThinking?: boolean;
+  supportsVision?: boolean;
+  supportsAudio?: boolean;
+  supportsMtp?: boolean;
   custom?: boolean;
 };
 
