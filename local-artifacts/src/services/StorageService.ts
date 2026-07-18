@@ -1,7 +1,7 @@
 import * as SQLite from 'expo-sqlite';
 import Storage from 'expo-sqlite/kv-store';
 import * as SecureStore from 'expo-secure-store';
-import { Artifact, ChatSession, GenerationSettings, Message, ModelDefinition } from '../types';
+import { Artifact, ChatSession, GenerationSettings, Message, MediaAttachment, ModelDefinition } from '../types';
 import { DEFAULT_GENERATION_SETTINGS } from '../constants';
 
 const SETTINGS_KEY = 'generation-settings-v1';
@@ -31,6 +31,7 @@ async function getDb() {
       sender TEXT NOT NULL,
       content TEXT NOT NULL,
       created_at INTEGER NOT NULL,
+      attachments_json TEXT,
       FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
     );
     CREATE TABLE IF NOT EXISTS artifacts (
@@ -48,13 +49,14 @@ async function getDb() {
       created_at INTEGER NOT NULL
     );
   `);
-  try { await db.execAsync('ALTER TABLE artifacts ADD COLUMN session_id TEXT'); } catch { /* Existing installs already have the column. */ }
+  try { await db.execAsync('ALTER TABLE artifacts ADD COLUMN session_id TEXT'); } catch { /* already exists */ }
   for (const statement of [
     'ALTER TABLE sessions ADD COLUMN web_search_enabled INTEGER NOT NULL DEFAULT 0',
-    \"ALTER TABLE sessions ADD COLUMN web_search_depth TEXT NOT NULL DEFAULT 'basic'\",
+    "ALTER TABLE sessions ADD COLUMN web_search_depth TEXT NOT NULL DEFAULT 'basic'",
     'ALTER TABLE sessions ADD COLUMN show_thinking INTEGER NOT NULL DEFAULT 0',
     'ALTER TABLE sessions ADD COLUMN thinking_enabled INTEGER NOT NULL DEFAULT 0',
-  ]) { try { await db.execAsync(statement); } catch { /* Existing installs already have the column. */ } }
+    'ALTER TABLE messages ADD COLUMN attachments_json TEXT',
+  ]) { try { await db.execAsync(statement); } catch { /* already exists */ } }
   return db;
 }
 
@@ -84,7 +86,16 @@ export async function loadSessions(): Promise<ChatSession[]> {
 
 export async function createSession(session: ChatSession) {
   const db = await getDb();
-  await db.runAsync('INSERT OR REPLACE INTO sessions (id, title, created_at, web_search_enabled, web_search_depth, show_thinking, thinking_enabled) VALUES (?, ?, ?, ?, ?, ?, ?)', session.id, session.title, session.createdAt, session.webSearchEnabled ? 1 : 0, session.webSearchDepth, session.showThinking ? 1 : 0, session.thinkingEnabled ? 1 : 0);
+  await db.runAsync(
+    'INSERT OR REPLACE INTO sessions (id, title, created_at, web_search_enabled, web_search_depth, show_thinking, thinking_enabled) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    session.id,
+    session.title,
+    session.createdAt,
+    session.webSearchEnabled ? 1 : 0,
+    session.webSearchDepth,
+    session.showThinking ? 1 : 0,
+    session.thinkingEnabled ? 1 : 0,
+  );
   await Storage.setItem(ACTIVE_SESSION_KEY, session.id);
 }
 
@@ -113,20 +124,42 @@ export async function saveActiveSessionId(sessionId: string) {
   await Storage.setItem(ACTIVE_SESSION_KEY, sessionId);
 }
 
+function parseAttachments(value: string | null | undefined): MediaAttachment[] | undefined {
+  if (!value) return undefined;
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter((item) => item && (item.kind === 'image' || item.kind === 'audio') && typeof item.uri === 'string') : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function loadMessages(sessionId: string): Promise<Message[]> {
   const db = await getDb();
-  const rows = await db.getAllAsync<{ id: string; session_id: string; sender: 'user' | 'assistant'; content: string; created_at: number }>(
-    'SELECT id, session_id, sender, content, created_at FROM messages WHERE session_id = ? ORDER BY created_at ASC',
+  const rows = await db.getAllAsync<{ id: string; session_id: string; sender: 'user' | 'assistant'; content: string; created_at: number; attachments_json: string | null }>(
+    'SELECT id, session_id, sender, content, created_at, attachments_json FROM messages WHERE session_id = ? ORDER BY created_at ASC',
     sessionId,
   );
-  return rows.map((row) => ({ id: row.id, sessionId: row.session_id, sender: row.sender, content: row.content, createdAt: row.created_at }));
+  return rows.map((row) => ({
+    id: row.id,
+    sessionId: row.session_id,
+    sender: row.sender,
+    content: row.content,
+    createdAt: row.created_at,
+    attachments: parseAttachments(row.attachments_json),
+  }));
 }
 
 export async function saveMessage(message: Message) {
   const db = await getDb();
   await db.runAsync(
-    'INSERT OR REPLACE INTO messages (id, session_id, sender, content, created_at) VALUES (?, ?, ?, ?, ?)',
-    message.id, message.sessionId, message.sender, message.content, message.createdAt,
+    'INSERT OR REPLACE INTO messages (id, session_id, sender, content, created_at, attachments_json) VALUES (?, ?, ?, ?, ?, ?)',
+    message.id,
+    message.sessionId,
+    message.sender,
+    message.content,
+    message.createdAt,
+    message.attachments?.length ? JSON.stringify(message.attachments) : null,
   );
 }
 
