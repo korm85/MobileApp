@@ -1,5 +1,9 @@
 import * as SQLite from 'expo-sqlite';
-import { Artifact, Message } from '../types';
+import Storage from 'expo-sqlite/kv-store';
+import { Artifact, GenerationSettings, Message } from '../types';
+import { DEFAULT_GENERATION_SETTINGS } from '../constants';
+
+const SETTINGS_KEY = 'generation-settings-v1';
 
 let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
@@ -95,4 +99,18 @@ export async function executeLocalDBWrite(payload: { appContext: string; jsonPay
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : 'Storage write failed' };
   }
+}
+
+export async function loadGenerationSettings(): Promise<GenerationSettings> {
+  try {
+    const value = await Storage.getItem(SETTINGS_KEY);
+    if (!value) return { ...DEFAULT_GENERATION_SETTINGS, systemPrompt: '' };
+    return { ...DEFAULT_GENERATION_SETTINGS, ...JSON.parse(value) };
+  } catch {
+    return { ...DEFAULT_GENERATION_SETTINGS, systemPrompt: '' };
+  }
+}
+
+export async function saveGenerationSettings(settings: GenerationSettings) {
+  await Storage.setItem(SETTINGS_KEY, JSON.stringify(settings));
 }
