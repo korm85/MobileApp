@@ -1,0 +1,32 @@
+{
+  "expo": {
+    "name": "LocalArtifacts",
+    "slug": "local-artifacts",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "scheme": "localartifacts",
+    "platforms": ["android"],
+    "plugins": [
+      "expo-sqlite",
+      "expo-build-properties",
+      [
+        "llama.rn",
+        {
+          "enableEntitlements": true,
+          "entitlementsProfile": "production",
+          "forceCxx20": true,
+          "enableOpenCLAndHexagon": false
+        }
+      ]
+    ],
+    "android": {
+      "package": "com.localartifacts.app",
+      "versionCode": 1,
+      "permissions": [],
+      "adaptiveIcon": {
+        "backgroundColor": "#101114"
+      }
+    }
+  }
+}
