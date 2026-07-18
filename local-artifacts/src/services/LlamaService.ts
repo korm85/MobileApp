@@ -1,5 +1,5 @@
 import { initLlama, LlamaContext } from 'llama.rn';
-import { SYSTEM_PROMPT } from '../constants';
+import { ARTIFACT_MODE_INSTRUCTIONS, SYSTEM_PROMPT } from '../constants';
 import { GenerationSettings } from '../types';
 
 export type InferenceOptions = {
@@ -56,7 +56,7 @@ export class LlamaService {
     if (!this.context) throw new Error('Load a local model before chatting.');
     const result = await this.context.completion({
       messages: [
-        { role: 'system', content: settings.systemPrompt.trim() || SYSTEM_PROMPT },
+        { role: 'system', content: `${settings.systemPrompt.trim() || SYSTEM_PROMPT}\n\n${ARTIFACT_MODE_INSTRUCTIONS}\n\nCURRENT RESPONSE MODE: ${settings.responseMode.toUpperCase()}` },
         ...history,
         { role: 'user', content: userPrompt },
       ],
