@@ -52,6 +52,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: LocalArtifacts-debuggable-release-apk
+          name: PocketMind-v1.0.6-release-apk
           path: local-artifacts/android/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
