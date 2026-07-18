@@ -1,5 +1,6 @@
 import { initLlama, LlamaContext } from 'llama.rn';
 import { SYSTEM_PROMPT } from '../constants';
+import { GenerationSettings } from '../types';
 
 export type InferenceOptions = {
   contextSize?: number;
@@ -12,6 +13,7 @@ export class LlamaService {
   private context: LlamaContext | null = null;
   private initializing = false;
   private loadedPath: string | null = null;
+  private loadedConfigKey: string | null = null;
 
   static getInstance() {
     if (!LlamaService.instance) LlamaService.instance = new LlamaService();
@@ -19,7 +21,8 @@ export class LlamaService {
   }
 
   async initialize(modelPath: string, options: InferenceOptions = {}) {
-    if (this.context && this.loadedPath === modelPath) return;
+    const configKey = `${modelPath}|${options.contextSize ?? 2048}|${options.threads ?? 4}|${options.gpuLayers ?? 0}`;
+    if (this.context && this.loadedConfigKey === configKey) return;
     if (this.initializing) throw new Error('The model is already loading');
     this.initializing = true;
     try {
@@ -34,6 +37,7 @@ export class LlamaService {
         use_mlock: false,
       });
       this.loadedPath = modelPath;
+      this.loadedConfigKey = configKey;
     } finally {
       this.initializing = false;
     }
@@ -47,17 +51,19 @@ export class LlamaService {
     userPrompt: string,
     onToken: (token: string) => void,
     history: Array<{ role: 'user' | 'assistant'; content: string }> = [],
+    settings: GenerationSettings,
   ) {
     if (!this.context) throw new Error('Load a local model before chatting.');
     const result = await this.context.completion({
       messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'system', content: settings.systemPrompt.trim() || SYSTEM_PROMPT },
         ...history,
         { role: 'user', content: userPrompt },
       ],
-      temperature: 0.2,
-      top_p: 0.9,
-      n_predict: 1200,
+      temperature: settings.temperature,
+      top_p: settings.topP,
+      n_predict: settings.maxTokens,
+      chat_template_kwargs: { preserve_thinking: settings.showThinking },
       stop: ['<|im_end|>', '</s>'],
     }, (data) => onToken(data.token));
     return result.text;
@@ -67,5 +73,6 @@ export class LlamaService {
     if (this.context) await this.context.release();
     this.context = null;
     this.loadedPath = null;
+    this.loadedConfigKey = null;
   }
 }
