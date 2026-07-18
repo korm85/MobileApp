@@ -1,6 +1,23 @@
 import { ModelDefinition } from './types';
 
+export const DEFAULT_CHAT_CONTROLS = {
+  webSearchEnabled: false,
+  webSearchDepth: 'basic',
+  showThinking: false,
+  thinkingEnabled: false,
+} as const;
+
 export const MODELS: ModelDefinition[] = [
+  {
+    id: 'gemma-4-e2b-qat',
+    name: 'Gemma 4 E2B QAT · fast',
+    description: 'Compact official Google Gemma 4 model for quicker on-device conversations with configurable thinking.',
+    filename: 'gemma-4-E2B_q4_0-it.gguf',
+    url: 'https://huggingface.co/google/gemma-4-E2B-it-qat-q4_0-gguf/resolve/main/gemma-4-E2B_q4_0-it.gguf',
+    sizeLabel: 'about 3.35 GB',
+    recommended: true,
+    supportsThinking: true,
+  },
   {
     id: 'gemma-4-e4b-qat',
     name: 'Gemma 4 E4B QAT',
@@ -8,7 +25,7 @@ export const MODELS: ModelDefinition[] = [
     filename: 'gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf',
     url: 'https://huggingface.co/unsloth/gemma-4-E4B-it-qat-GGUF/resolve/main/gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf',
     sizeLabel: 'about 3.2 GB',
-    recommended: true,
+    supportsThinking: true,
   },
   {
     id: 'qwen-3-5-4b',
@@ -17,6 +34,7 @@ export const MODELS: ModelDefinition[] = [
     filename: 'Qwen3.5-4B-Q4_K_M.gguf',
     url: 'https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_K_M.gguf',
     sizeLabel: 'about 2.7 GB',
+    supportsThinking: false,
   },
 ];
 
