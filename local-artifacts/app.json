@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "LocalArtifacts",
+    "name": "PocketMind",
     "slug": "local-artifacts",
-    "version": "1.0.4",
+    "version": "1.0.5",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "scheme": "localartifacts",
@@ -23,7 +23,7 @@
     ],
     "android": {
       "package": "com.localartifacts.app",
-      "versionCode": 4,
+      "versionCode": 5,
       "permissions": [],
       "adaptiveIcon": {
         "backgroundColor": "#101114"
