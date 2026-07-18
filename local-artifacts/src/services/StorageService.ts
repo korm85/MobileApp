@@ -105,7 +105,21 @@ export async function loadGenerationSettings(): Promise<GenerationSettings> {
   try {
     const value = await Storage.getItem(SETTINGS_KEY);
     if (!value) return { ...DEFAULT_GENERATION_SETTINGS, systemPrompt: '' };
-    return { ...DEFAULT_GENERATION_SETTINGS, ...JSON.parse(value) };
+    const saved = JSON.parse(value) as Partial<GenerationSettings>;
+    const numberOrDefault = (candidate: unknown, fallback: number, min: number, max: number) => {
+      const number = typeof candidate === 'number' && Number.isFinite(candidate) ? candidate : fallback;
+      return Math.min(max, Math.max(min, number));
+    };
+    return {
+      systemPrompt: typeof saved.systemPrompt === 'string' ? saved.systemPrompt : '',
+      temperature: numberOrDefault(saved.temperature, DEFAULT_GENERATION_SETTINGS.temperature, 0, 1.5),
+      topP: numberOrDefault(saved.topP, DEFAULT_GENERATION_SETTINGS.topP, 0.1, 1),
+      maxTokens: Math.round(numberOrDefault(saved.maxTokens, DEFAULT_GENERATION_SETTINGS.maxTokens, 256, 2048) / 128) * 128,
+      contextSize: Math.round(numberOrDefault(saved.contextSize, DEFAULT_GENERATION_SETTINGS.contextSize, 1024, 4096) / 512) * 512,
+      threads: Math.round(numberOrDefault(saved.threads, DEFAULT_GENERATION_SETTINGS.threads, 1, 6)),
+      gpuLayers: Math.round(numberOrDefault(saved.gpuLayers, DEFAULT_GENERATION_SETTINGS.gpuLayers, 0, 99)),
+      showThinking: saved.showThinking === true,
+    };
   } catch {
     return { ...DEFAULT_GENERATION_SETTINGS, systemPrompt: '' };
   }
