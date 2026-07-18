@@ -1,10 +1,7 @@
 import { Artifact } from '../types';
 
-const CODE_BLOCK_REGEX = /```(?:html|HTML|xml|javascript|js)?\s*([\s\S]*?)```/g;
-
-function looksLikeHtml(value: string) {
-  return /<!doctype\s+html/i.test(value) || /<html[\s>]/i.test(value) || /<body[\s>]/i.test(value) || /<(?:style|script|main|button|table)[\s>]/i.test(value);
-}
+const OPEN_TAG = /<pm-artifact(?:\s+title=(?:"([^"]*)"|'([^']*)'))?\s*>/i;
+const CLOSE_TAG = '</pm-artifact>';
 
 function normalizeHtml(value: string) {
   const html = value.trim();
@@ -12,22 +9,28 @@ function normalizeHtml(value: string) {
   return `<!doctype html><html><head><meta charset="utf-8"></head><body>${html}</body></html>`;
 }
 
-export function parseArtifact(content: string): string | null {
-  for (const match of content.matchAll(CODE_BLOCK_REGEX)) {
-    const candidate = match[1]?.trim();
-    if (candidate && looksLikeHtml(candidate)) return normalizeHtml(candidate);
-  }
-
-  const documentMatch = /<!doctype\s+html[\s\S]*?<\/html\s*>/i.exec(content);
-  if (documentMatch?.[0]) return normalizeHtml(documentMatch[0]);
-
-  const htmlMatch = /<html[\s\S]*?<\/html\s*>/i.exec(content);
-  if (htmlMatch?.[0]) return normalizeHtml(htmlMatch[0]);
-
-  return null;
+function isValidArtifactHtml(value: string) {
+  return /<!doctype\s+html/i.test(value) || /<html[\s>]/i.test(value) || /<(?:main|body|section|canvas|div)[\s>]/i.test(value);
 }
 
-/** Accumulates streamed model output and emits an artifact once a complete document is available. */
+export type ParsedArtifact = { title: string; html: string };
+
+/** The only artifact signal accepted by the app. Raw HTML and Markdown fences are deliberately ignored. */
+export function parseArtifactProtocol(content: string): ParsedArtifact | null {
+  const open = OPEN_TAG.exec(content);
+  if (!open) return null;
+  const closeIndex = content.indexOf(CLOSE_TAG, (open.index ?? 0) + open[0].length);
+  if (closeIndex < 0) return null;
+  const html = content.slice((open.index ?? 0) + open[0].length, closeIndex).trim();
+  if (!html || !isValidArtifactHtml(html)) return null;
+  return { title: (open[1] || open[2] || inferArtifactTitle(html)).trim().slice(0, 64) || 'Interactive artifact', html: normalizeHtml(html) };
+}
+
+export function stripArtifactProtocol(content: string) {
+  return content.replace(/<pm-artifact(?:\s+title=(?:"[^"]*"|'[^']*'))?\s*>[\s\S]*?<\/pm-artifact>/gi, '').trim();
+}
+
+/** Accumulates output and emits exactly once after a complete protocol envelope arrives. */
 export class ArtifactStreamDetector {
   private content = '';
   private emitted = false;
@@ -37,17 +40,13 @@ export class ArtifactStreamDetector {
     this.emitted = false;
   }
 
-  append(chunk: string): string | null {
+  append(chunk: string): ParsedArtifact | null {
     if (this.emitted) return null;
     this.content += chunk;
-    const artifact = parseArtifact(this.content);
+    const artifact = parseArtifactProtocol(this.content);
     if (!artifact) return null;
     this.emitted = true;
     return artifact;
-  }
-
-  getContent() {
-    return this.content;
   }
 }
 
@@ -57,11 +56,12 @@ export function inferArtifactTitle(html: string, fallback = 'Interactive artifac
   return fallback;
 }
 
-export function createArtifact(html: string, sourceMessageId?: string): Artifact {
+export function createArtifact(parsed: ParsedArtifact, sessionId: string, sourceMessageId?: string): Artifact {
   return {
     id: `artifact-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    title: inferArtifactTitle(html),
-    html,
+    sessionId,
+    title: parsed.title || inferArtifactTitle(parsed.html),
+    html: parsed.html,
     sourceMessageId,
     createdAt: Date.now(),
   };
