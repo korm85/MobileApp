@@ -5,7 +5,6 @@ import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
-  SafeAreaView,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -14,6 +13,7 @@ import {
   useColorScheme,
   View,
 } from 'react-native';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { ArtifactRenderer } from './src/components/ArtifactRenderer';
 import { DEFAULT_GENERATION_SETTINGS, DEFAULT_SESSION_ID, MODELS } from './src/constants';
 import { useThrottledStream } from './src/hooks/useThrottledStream';
@@ -29,6 +29,10 @@ type Tab = 'chat' | 'artifacts' | 'models' | 'settings';
 const uid = (prefix: string) => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
 export default function App() {
+  return <SafeAreaProvider><AppContent /></SafeAreaProvider>;
+}
+
+function AppContent() {
   const systemScheme = useColorScheme();
   const theme = systemScheme === 'light' ? lightTheme : darkTheme;
   const [tab, setTab] = useState<Tab>('chat');
@@ -155,7 +159,7 @@ export default function App() {
 
   if (initializing) return <View style={[styles.center, { backgroundColor: theme.background }]}><ActivityIndicator color={theme.accent} /><Text style={[styles.muted, { color: theme.muted, marginTop: 12 }]}>Preparing your private workspace…</Text></View>;
 
-  return <SafeAreaView style={[styles.safe, { backgroundColor: theme.background }]}>
+  return <SafeAreaView edges={['top', 'bottom']} style={[styles.safe, { backgroundColor: theme.background }]}>
     <StatusBar barStyle={systemScheme === 'light' ? 'dark-content' : 'light-content'} />
     <View style={styles.app}>
       <View style={[styles.header, { borderBottomColor: theme.border }]}>
