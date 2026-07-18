@@ -10,11 +10,11 @@ export const DEFAULT_CHAT_CONTROLS = {
 export const MODELS: ModelDefinition[] = [
   {
     id: 'gemma-4-e2b-qat',
-    name: 'Gemma 4 E2B QAT · fast',
-    description: 'Compact official Google Gemma 4 model for quicker on-device conversations with configurable thinking.',
-    filename: 'gemma-4-E2B_q4_0-it.gguf',
-    url: 'https://huggingface.co/google/gemma-4-E2B-it-qat-q4_0-gguf/resolve/main/gemma-4-E2B_q4_0-it.gguf',
-    sizeLabel: 'about 3.35 GB',
+    name: 'Gemma 4 E2B QAT · best mobile balance',
+    description: 'Unsloth Dynamic 2.0 QAT GGUF with the best E2B quality, speed and memory balance for on-device chat.',
+    filename: 'gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf',
+    url: 'https://huggingface.co/unsloth/gemma-4-E2B-it-qat-GGUF/resolve/main/gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf',
+    sizeLabel: 'about 2.62 GB',
     recommended: true,
     supportsThinking: true,
   },
