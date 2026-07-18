@@ -34,6 +34,17 @@ export type ModelState = Record<string, {
   error?: string;
 }>;
 
+export type GenerationSettings = {
+  systemPrompt: string;
+  temperature: number;
+  topP: number;
+  maxTokens: number;
+  contextSize: number;
+  threads: number;
+  gpuLayers: number;
+  showThinking: boolean;
+};
+
 export type AppTheme = {
   background: string;
   surface: string;
