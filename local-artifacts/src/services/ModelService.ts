@@ -6,6 +6,7 @@ import {
   getExistingDownloadTasks,
 } from '@kesha-antonov/react-native-background-downloader';
 import { MODELS } from '../constants';
+import { ModelDefinition } from '../types';
 
 export type ModelDownloadUpdate = {
   modelId: string;
@@ -42,7 +43,7 @@ function emit(update: ModelDownloadUpdate) {
   listeners.forEach((listener) => listener(update));
 }
 
-function attachTask(task: ReturnType<typeof createDownloadTask>, modelId: string) {
+function attachTask(task: ReturnType<typeof createDownloadTask>, modelId: string, models: ModelDefinition[]) {
   activeTasks.set(modelId, task);
   task
     .progress(({ bytesDownloaded, bytesTotal }) => emit({
@@ -55,7 +56,7 @@ function attachTask(task: ReturnType<typeof createDownloadTask>, modelId: string
         try {
           await completeHandler(task.id);
           activeTasks.delete(modelId);
-          const model = MODELS.find((item) => item.id === modelId);
+          const model = models.find((item) => item.id === modelId);
           const valid = model ? await modelExists(model.filename) : false;
           emit(valid ? { modelId, status: 'ready', progress: 1 } : { modelId, status: 'error', progress: 0, error: 'Downloaded model file is incomplete.' });
         } catch (error) {
@@ -72,13 +73,13 @@ function attachTask(task: ReturnType<typeof createDownloadTask>, modelId: string
     });
 }
 
-export async function reattachExistingModelDownloads() {
+export async function reattachExistingModelDownloads(models: ModelDefinition[] = MODELS) {
   const tasks = await getExistingDownloadTasks();
   for (const task of tasks) {
     const modelId = typeof task.metadata?.modelId === 'string' ? task.metadata.modelId : null;
     if (!modelId) continue;
     if (activeTasks.has(modelId)) continue;
-    const model = MODELS.find((item) => item.id === modelId);
+    const model = models.find((item) => item.id === modelId);
     if (!model) continue;
     if (task.state === 'DONE') {
       if (await modelExists(model.filename)) emit({ modelId, status: 'ready', progress: 1 });
@@ -86,41 +87,45 @@ export async function reattachExistingModelDownloads() {
       continue;
     }
     if (task.state === 'DOWNLOADING' || task.state === 'PENDING' || task.state === 'PAUSED') {
-      attachTask(task, modelId);
+      attachTask(task, modelId, models);
       emit({ modelId, status: 'downloading', progress: task.bytesTotal > 0 ? task.bytesDownloaded / task.bytesTotal : 0 });
     }
   }
 }
 
-export async function downloadModel(modelId: string) {
-  const model = MODELS.find((item) => item.id === modelId);
+export async function downloadModel(modelId: string, models: ModelDefinition[] = MODELS) {
+  const model = models.find((item) => item.id === modelId);
   if (!model) throw new Error('Unknown model');
+  return downloadModelDefinition(model, models);
+}
+
+export async function downloadModelDefinition(model: ModelDefinition, models: ModelDefinition[] = MODELS) {
   if (await modelExists(model.filename)) {
-    emit({ modelId, status: 'ready', progress: 1 });
+    emit({ modelId: model.id, status: 'ready', progress: 1 });
     return;
   }
-  await reattachExistingModelDownloads();
-  if (activeTasks.has(modelId)) return;
+  await reattachExistingModelDownloads(models);
+  if (activeTasks.has(model.id)) return;
 
   await ensureModelDirectory();
   const existing = await FileSystem.getInfoAsync(getModelPath(model.filename));
   if (existing.exists) await FileSystem.deleteAsync(getModelPath(model.filename), { idempotent: true });
   const destination = getModelPath(model.filename);
   const task = createDownloadTask({
-    id: `model-${modelId}-${Date.now()}`,
+    id: `model-${model.id}-${Date.now()}`,
     url: model.url,
     destination,
-    metadata: { modelId, filename: model.filename },
+    metadata: { modelId: model.id, filename: model.filename },
     isAllowedOverMetered: false,
   });
 
-  attachTask(task, modelId);
-  emit({ modelId, status: 'downloading', progress: 0 });
+  attachTask(task, model.id, models);
+  emit({ modelId: model.id, status: 'downloading', progress: 0 });
   try {
     task.start();
   } catch (error) {
-    activeTasks.delete(modelId);
-    emit({ modelId, status: 'error', progress: 0, error: error instanceof Error ? error.message : 'Could not start model download.' });
+    activeTasks.delete(model.id);
+    emit({ modelId: model.id, status: 'error', progress: 0, error: error instanceof Error ? error.message : 'Could not start model download.' });
     throw error;
   }
 }
