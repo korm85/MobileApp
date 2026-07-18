@@ -20,7 +20,8 @@ import { useThrottledStream } from './src/hooks/useThrottledStream';
 import { ArtifactStreamDetector, createArtifact, parseArtifact } from './src/services/ArtifactParser';
 import { LlamaService } from './src/services/LlamaService';
 import { downloadModel, getModelPath, modelExists, reattachExistingModelDownloads, subscribeModelDownloads } from './src/services/ModelService';
-import { initializeDatabase, loadArtifacts, loadGenerationSettings, loadMessages, saveArtifact, saveGenerationSettings, saveMessage } from './src/services/StorageService';
+import { initializeDatabase, loadArtifacts, loadGenerationSettings, loadMessages, loadTavilyApiKey, saveArtifact, saveGenerationSettings, saveMessage, saveTavilyApiKey } from './src/services/StorageService';
+import { formatSearchContext, formatSourcesForMessage, searchWeb, WebSearchResponse } from './src/services/WebSearchService';
 import { darkTheme, lightTheme } from './src/theme';
 import { AppTheme, Artifact, GenerationSettings, Message, ModelState } from './src/types';
 
@@ -43,6 +44,7 @@ function AppContent() {
   const [loadedModelId, setLoadedModelId] = useState<string | null>(null);
   const [isLoadingModel, setIsLoadingModel] = useState(false);
   const [settings, setSettings] = useState<GenerationSettings>({ ...DEFAULT_GENERATION_SETTINGS });
+  const [tavilyApiKey, setTavilyApiKey] = useState('');
   const [initializing, setInitializing] = useState(true);
   const [initializationError, setInitializationError] = useState<string | null>(null);
   const stream = useThrottledStream(80);
@@ -59,11 +61,12 @@ function AppContent() {
     (async () => {
       try {
         await initializeDatabase();
-        const [savedMessages, savedArtifacts, savedSettings] = await Promise.all([loadMessages(DEFAULT_SESSION_ID), loadArtifacts(), loadGenerationSettings()]);
+        const [savedMessages, savedArtifacts, savedSettings, savedTavilyApiKey] = await Promise.all([loadMessages(DEFAULT_SESSION_ID), loadArtifacts(), loadGenerationSettings(), loadTavilyApiKey()]);
         if (!mounted) return;
         setMessages(savedMessages);
         setArtifacts(savedArtifacts);
         setSettings(savedSettings);
+        setTavilyApiKey(savedTavilyApiKey);
         const existing: ModelState = {};
         for (const model of MODELS) {
           if (await modelExists(model.filename)) existing[model.id] = { status: 'ready', progress: 1 };
@@ -135,8 +138,17 @@ function AppContent() {
         const html = artifactDetectorRef.current.append(token);
         if (html) void publishArtifact(html);
       };
-      const response = await LlamaService.getInstance().generateResponse(prompt, onToken, history, settings);
-      const finalMessage = { ...assistantMessage, content: response };
+      let generationPrompt = prompt;
+      let searchResponse: WebSearchResponse | null = null;
+      if (settings.webSearchEnabled) {
+        searchResponse = await searchWeb(prompt, settings.webSearchDepth);
+        if (searchResponse.results.length > 0) {
+          generationPrompt = `${prompt}\n\n${formatSearchContext(searchResponse)}`;
+        }
+      }
+      const response = await LlamaService.getInstance().generateResponse(generationPrompt, onToken, history, settings);
+      const sources = searchResponse ? formatSourcesForMessage(searchResponse) : '';
+      const finalMessage = { ...assistantMessage, content: `${response.trim()}${sources}` };
       setMessages((current) => current.map((message) => message.id === assistantId ? finalMessage : message));
       await saveMessage(finalMessage);
       const html = parseArtifact(response) ?? parseArtifact(streamedResponse);
@@ -178,9 +190,15 @@ function AppContent() {
     }
   };
 
-  const handleSaveSettings = async (next: GenerationSettings) => {
+  const handleSaveSettings = async (next: GenerationSettings, nextTavilyApiKey: string) => {
     setSettings(next);
+    setTavilyApiKey(nextTavilyApiKey.trim());
     await saveGenerationSettings(next);
+    await saveTavilyApiKey(nextTavilyApiKey);
+  };
+
+  const handleTestSearch = async (apiKeyOverride?: string) => {
+    await searchWeb('PocketMind web search connection test', settings.webSearchDepth, apiKeyOverride);
   };
 
   if (initializing) return <View style={[styles.center, { backgroundColor: theme.background }]}><ActivityIndicator color={theme.accent} /><Text style={[styles.muted, { color: theme.muted, marginTop: 12 }]}>Preparing your private workspace…</Text></View>;
@@ -191,7 +209,7 @@ function AppContent() {
     <View style={styles.app}>
       <View style={[styles.header, { borderBottomColor: theme.border }]}>
         <View>
-          <Text style={[styles.brand, { color: theme.text }]}>LocalArtifacts</Text>
+          <Text style={[styles.brand, { color: theme.text }]}>PocketMind</Text>
           <Text style={[styles.subtitle, { color: theme.muted }]}>{loadedModelId ? `${MODELS.find((model) => model.id === loadedModelId)?.name} · on device` : 'Private workspace · no cloud'}</Text>
         </View>
         <View style={styles.headerActions}>
@@ -206,7 +224,7 @@ function AppContent() {
         {tab === 'chat' && <ChatScreen messages={messages} theme={theme} busy={Boolean(streamMessageId)} onSend={sendMessage} onOpenModels={() => setTab('models')} onOpenArtifact={(artifact) => { setSelectedArtifact(artifact); setTab('artifacts'); }} artifacts={artifacts} />}
         {tab === 'artifacts' && <ArtifactsScreen artifacts={artifacts} selected={selectedArtifact} theme={theme} onSelect={setSelectedArtifact} />}
         {tab === 'models' && <ModelsScreen theme={theme} states={modelState} loadedModelId={loadedModelId} loading={isLoadingModel} onDownload={handleDownload} onLoad={handleLoad} />}
-        {tab === 'settings' && <SettingsScreen theme={theme} settings={settings} onSave={handleSaveSettings} />}
+        {tab === 'settings' && <SettingsScreen theme={theme} settings={settings} tavilyApiKey={tavilyApiKey} onSave={handleSaveSettings} onTestSearch={handleTestSearch} />}
       </View>
 
       <View style={[styles.nav, { backgroundColor: theme.surface, borderTopColor: theme.border }]}>
@@ -272,11 +290,15 @@ function ModelsScreen({ theme, states, loadedModelId, loading, onDownload, onLoa
   return <ScrollView contentContainerStyle={styles.screenPadding}><Text style={[styles.screenTitle, { color: theme.text }]}>Local models</Text><Text style={[styles.screenCopy, { color: theme.muted }]}>Downloads are handed to Android's background downloader, so they can continue while you change screens or turn off the display.</Text><View style={[styles.notice, { backgroundColor: theme.accentSoft }]}><Text style={{ color: theme.accent, fontWeight: '700' }}>Pixel 10a recommended setup</Text><Text style={[styles.noticeCopy, { color: theme.text }]}>Use CPU inference on the Tensor G4/Mali GPU. The current llama.rn OpenCL path targets Adreno devices.</Text></View>{MODELS.map((model) => { const state = states[model.id]; const isLoaded = loadedModelId === model.id; const isBusy = state?.status === 'downloading' || state?.status === 'loading' || loading; return <View key={model.id} style={[styles.modelCard, { backgroundColor: theme.surface, borderColor: isLoaded ? theme.accent : theme.border }]}><View style={styles.modelTop}><View style={styles.flex}><View style={styles.row}><Text style={[styles.cardTitle, { color: theme.text }]}>{model.name}</Text>{model.recommended && <Text style={[styles.recommended, { color: theme.accent, backgroundColor: theme.accentSoft }]}>Recommended</Text>}</View><Text style={[styles.cardMeta, { color: theme.muted }]}>{model.sizeLabel}</Text></View>{isLoaded && <Text style={{ color: theme.accent, fontSize: 22 }}>✓</Text>}</View><Text style={[styles.modelDescription, { color: theme.muted }]}>{model.description}</Text>{state?.status === 'downloading' && <View style={[styles.progressTrack, { backgroundColor: theme.surfaceRaised }]}><View style={[styles.progressFill, { width: `${Math.max(2, state.progress * 100)}%`, backgroundColor: theme.accent }]} /></View>}{state?.error && <Text style={[styles.errorText, { color: theme.danger }]}>{state.error}</Text>}<View style={styles.modelActions}>{state?.status !== 'ready' && state?.status !== 'loaded' && state?.status !== 'loading' && <Pressable disabled={isBusy} onPress={() => onDownload(model.id)} style={[styles.smallButton, { borderColor: theme.border }]}><Text style={{ color: theme.text }}>{state?.status === 'error' ? 'Retry download' : 'Download'}</Text></Pressable>}{(state?.status === 'ready' || isLoaded) && <Pressable disabled={isBusy && !isLoaded} onPress={() => onLoad(model.id)} style={[styles.smallButton, { backgroundColor: isLoaded ? theme.accentSoft : theme.accent, borderColor: theme.accent }]}>{state?.status === 'loading' ? <ActivityIndicator size="small" color="#101114" /> : <Text style={{ color: isLoaded ? theme.accent : '#101114', fontWeight: '700' }}>{isLoaded ? 'Reload model' : 'Load model'}</Text>}</Pressable>}</View></View>; })}</ScrollView>;
 }
 
-function SettingsScreen({ theme, settings, onSave }: { theme: AppTheme; settings: GenerationSettings; onSave: (settings: GenerationSettings) => Promise<void> }) {
+function SettingsScreen({ theme, settings, tavilyApiKey, onSave, onTestSearch }: { theme: AppTheme; settings: GenerationSettings; tavilyApiKey: string; onSave: (settings: GenerationSettings, tavilyApiKey: string) => Promise<void>; onTestSearch: (apiKeyOverride?: string) => Promise<void> }) {
   const [draft, setDraft] = useState(settings);
+  const [apiKeyDraft, setApiKeyDraft] = useState(tavilyApiKey);
   const [saved, setSaved] = useState(false);
+  const [testingSearch, setTestingSearch] = useState(false);
+  const [searchTestResult, setSearchTestResult] = useState<string | null>(null);
 
   useEffect(() => setDraft(settings), [settings]);
+  useEffect(() => setApiKeyDraft(tavilyApiKey), [tavilyApiKey]);
 
   const updateNumber = (key: keyof GenerationSettings, delta: number, min: number, max: number) => {
     const value = Number(draft[key]) as number;
@@ -285,8 +307,21 @@ function SettingsScreen({ theme, settings, onSave }: { theme: AppTheme; settings
   };
 
   const save = async () => {
-    await onSave(draft);
+    await onSave(draft, apiKeyDraft);
     setSaved(true);
+  };
+
+  const testSearch = async () => {
+    setTestingSearch(true);
+    setSearchTestResult(null);
+    try {
+      await onTestSearch(apiKeyDraft);
+      setSearchTestResult('Search connection works.');
+    } catch (error) {
+      setSearchTestResult(error instanceof Error ? error.message : 'Search connection failed.');
+    } finally {
+      setTestingSearch(false);
+    }
   };
 
   return <ScrollView contentContainerStyle={styles.screenPadding} keyboardShouldPersistTaps="handled">
@@ -295,7 +330,7 @@ function SettingsScreen({ theme, settings, onSave }: { theme: AppTheme; settings
 
     <Text style={[styles.settingsSection, { color: theme.text }]}>Assistant instructions</Text>
     <Text style={[styles.settingsLabel, { color: theme.muted }]}>System prompt</Text>
-    <TextInput value={draft.systemPrompt} onChangeText={(systemPrompt) => { setDraft((current) => ({ ...current, systemPrompt })); setSaved(false); }} placeholder="Leave empty to use the built-in LocalArtifacts prompt" placeholderTextColor={theme.muted} multiline textAlignVertical="top" style={[styles.settingsInput, { color: theme.text, backgroundColor: theme.surface, borderColor: theme.border }]} />
+    <TextInput value={draft.systemPrompt} onChangeText={(systemPrompt) => { setDraft((current) => ({ ...current, systemPrompt })); setSaved(false); }} placeholder="Leave empty to use the built-in PocketMind prompt" placeholderTextColor={theme.muted} multiline textAlignVertical="top" style={[styles.settingsInput, { color: theme.text, backgroundColor: theme.surface, borderColor: theme.border }]} />
 
     <Text style={[styles.settingsSection, { color: theme.text }]}>Generation</Text>
     <SettingStepper theme={theme} title="Temperature" description="Higher values are more varied; lower values are more predictable." value={draft.temperature} step={0.1} decimals={1} onChange={(delta) => updateNumber('temperature', delta, 0, 1.5)} />
@@ -306,6 +341,20 @@ function SettingsScreen({ theme, settings, onSave }: { theme: AppTheme; settings
       <View style={[styles.toggleTrack, { backgroundColor: draft.showThinking ? theme.accent : theme.surfaceRaised }]}><View style={[styles.toggleThumb, { backgroundColor: draft.showThinking ? '#101114' : theme.muted, alignSelf: draft.showThinking ? 'flex-end' : 'flex-start' }]} /></View>
     </Pressable>
 
+    <Text style={[styles.settingsSection, { color: theme.text }]}>Web search</Text>
+    <Pressable onPress={() => { setDraft((current) => ({ ...current, webSearchEnabled: !current.webSearchEnabled })); setSaved(false); }} style={[styles.toggleRow, { borderBottomColor: theme.border }]}>
+      <View style={styles.flex}><Text style={[styles.cardTitle, { color: theme.text }]}>Search the web before answering</Text><Text style={[styles.cardMeta, { color: theme.muted }]}>When enabled, PocketMind retrieves current sources from Tavily and passes them to the local model.</Text></View>
+      <View style={[styles.toggleTrack, { backgroundColor: draft.webSearchEnabled ? theme.accent : theme.surfaceRaised }]}><View style={[styles.toggleThumb, { backgroundColor: draft.webSearchEnabled ? '#101114' : theme.muted, alignSelf: draft.webSearchEnabled ? 'flex-end' : 'flex-start' }]} /></View>
+    </Pressable>
+    <Text style={[styles.settingsLabel, { color: theme.muted, marginTop: 16 }]}>Tavily API key</Text>
+    <TextInput value={apiKeyDraft} onChangeText={(value) => { setApiKeyDraft(value); setSaved(false); setSearchTestResult(null); }} placeholder="Optional: tvly-…" placeholderTextColor={theme.muted} autoCapitalize="none" autoCorrect={false} secureTextEntry style={[styles.settingsInput, { minHeight: 50, color: theme.text, backgroundColor: theme.surface, borderColor: theme.border }]} />
+    <Text style={[styles.cardMeta, { color: theme.muted }]}>Stored in Android encrypted storage. If empty, PocketMind can use Tavily's rate-limited keyless mode.</Text>
+    <View style={[styles.row, { marginTop: 12 }]}>
+      <Pressable onPress={() => { setDraft((current) => ({ ...current, webSearchDepth: current.webSearchDepth === 'basic' ? 'advanced' : 'basic' })); setSaved(false); }} style={[styles.smallButton, { borderColor: theme.border }]}><Text style={{ color: theme.text }}>Depth: {draft.webSearchDepth}</Text></Pressable>
+      <Pressable disabled={testingSearch} onPress={testSearch} style={[styles.smallButton, { borderColor: theme.accent, backgroundColor: theme.accentSoft }]}>{testingSearch ? <ActivityIndicator size="small" color={theme.accent} /> : <Text style={{ color: theme.accent, fontWeight: '700' }}>Test search</Text>}</Pressable>
+    </View>
+    {!!searchTestResult && <Text style={[styles.cardMeta, { color: searchTestResult.includes('works') ? theme.accent : theme.danger, marginTop: 8 }]}>{searchTestResult}</Text>}
+
     <Text style={[styles.settingsSection, { color: theme.text }]}>Advanced</Text>
     <Text style={[styles.cardMeta, { color: theme.muted, marginBottom: 4 }]}>Context, threads, and GPU layers apply the next time you load or reload the model.</Text>
     <SettingStepper theme={theme} title="Context size" description="Maximum conversation context. 2,048 is a safer Pixel default." value={draft.contextSize} step={512} decimals={0} onChange={(delta) => updateNumber('contextSize', delta, 1024, 4096)} />
@@ -313,7 +362,7 @@ function SettingsScreen({ theme, settings, onSave }: { theme: AppTheme; settings
     <SettingStepper theme={theme} title="GPU layers" description="Keep at 0 on Pixel 10a/Mali unless you have verified a compatible backend." value={draft.gpuLayers} step={1} decimals={0} onChange={(delta) => updateNumber('gpuLayers', delta, 0, 99)} />
 
     <Pressable onPress={save} style={[styles.saveButton, { backgroundColor: theme.accent }]}><Text style={styles.saveText}>{saved ? 'Saved' : 'Save settings'}</Text></Pressable>
-    <View style={[styles.settingRow, { borderBottomColor: theme.border }]}><Text style={[styles.cardTitle, { color: theme.text }]}>Privacy</Text><Text style={[styles.cardMeta, { color: theme.muted }]}>Chat history, artifacts, model files, and saved data are stored on this device. Generated HTML runs with network access disabled.</Text></View>
+    <View style={[styles.settingRow, { borderBottomColor: theme.border }]}><Text style={[styles.cardTitle, { color: theme.text }]}>Privacy</Text><Text style={[styles.cardMeta, { color: theme.muted }]}>Chat history, artifacts, model files, and saved data are stored on this device. Web search is only used when enabled. Generated HTML still runs with network access disabled.</Text></View>
   </ScrollView>;
 }
 
