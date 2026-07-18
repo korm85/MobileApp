@@ -17,6 +17,7 @@
     "expo-sqlite": "~57.0.1",
     "expo-system-ui": "~57.0.1",
     "llama.rn": "^0.12.6",
+    "@kesha-antonov/react-native-background-downloader": "^4.5.8",
     "react": "19.2.7",
     "react-native": "0.86.0",
     "react-native-safe-area-context": "~5.8.0",
