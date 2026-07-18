@@ -1,7 +1,7 @@
 import * as SQLite from 'expo-sqlite';
 import Storage from 'expo-sqlite/kv-store';
 import * as SecureStore from 'expo-secure-store';
-import { Artifact, ChatSession, GenerationSettings, Message } from '../types';
+import { Artifact, ChatSession, GenerationSettings, Message, ModelDefinition } from '../types';
 import { DEFAULT_GENERATION_SETTINGS } from '../constants';
 
 const SETTINGS_KEY = 'generation-settings-v1';
@@ -19,7 +19,11 @@ async function getDb() {
     CREATE TABLE IF NOT EXISTS sessions (
       id TEXT PRIMARY KEY NOT NULL,
       title TEXT NOT NULL,
-      created_at INTEGER NOT NULL
+      created_at INTEGER NOT NULL,
+      web_search_enabled INTEGER NOT NULL DEFAULT 0,
+      web_search_depth TEXT NOT NULL DEFAULT 'basic',
+      show_thinking INTEGER NOT NULL DEFAULT 0,
+      thinking_enabled INTEGER NOT NULL DEFAULT 0
     );
     CREATE TABLE IF NOT EXISTS messages (
       id TEXT PRIMARY KEY NOT NULL,
@@ -45,6 +49,12 @@ async function getDb() {
     );
   `);
   try { await db.execAsync('ALTER TABLE artifacts ADD COLUMN session_id TEXT'); } catch { /* Existing installs already have the column. */ }
+  for (const statement of [
+    'ALTER TABLE sessions ADD COLUMN web_search_enabled INTEGER NOT NULL DEFAULT 0',
+    \"ALTER TABLE sessions ADD COLUMN web_search_depth TEXT NOT NULL DEFAULT 'basic'\",
+    'ALTER TABLE sessions ADD COLUMN show_thinking INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE sessions ADD COLUMN thinking_enabled INTEGER NOT NULL DEFAULT 0',
+  ]) { try { await db.execAsync(statement); } catch { /* Existing installs already have the column. */ } }
   return db;
 }
 
@@ -60,18 +70,43 @@ export async function initializeDatabase() {
 
 export async function loadSessions(): Promise<ChatSession[]> {
   const db = await getDb();
-  const rows = await db.getAllAsync<{ id: string; title: string; created_at: number }>('SELECT id, title, created_at FROM sessions ORDER BY created_at DESC');
-  return rows.map((row) => ({ id: row.id, title: row.title, createdAt: row.created_at }));
+  const rows = await db.getAllAsync<{ id: string; title: string; created_at: number; web_search_enabled: number; web_search_depth: string; show_thinking: number; thinking_enabled: number }>('SELECT id, title, created_at, web_search_enabled, web_search_depth, show_thinking, thinking_enabled FROM sessions ORDER BY created_at DESC');
+  return rows.map((row) => ({
+    id: row.id,
+    title: row.title,
+    createdAt: row.created_at,
+    webSearchEnabled: row.web_search_enabled === 1,
+    webSearchDepth: row.web_search_depth === 'advanced' ? 'advanced' : 'basic',
+    showThinking: row.show_thinking === 1,
+    thinkingEnabled: row.thinking_enabled === 1,
+  }));
 }
 
 export async function createSession(session: ChatSession) {
   const db = await getDb();
-  await db.runAsync('INSERT OR REPLACE INTO sessions (id, title, created_at) VALUES (?, ?, ?)', session.id, session.title, session.createdAt);
+  await db.runAsync('INSERT OR REPLACE INTO sessions (id, title, created_at, web_search_enabled, web_search_depth, show_thinking, thinking_enabled) VALUES (?, ?, ?, ?, ?, ?, ?)', session.id, session.title, session.createdAt, session.webSearchEnabled ? 1 : 0, session.webSearchDepth, session.showThinking ? 1 : 0, session.thinkingEnabled ? 1 : 0);
   await Storage.setItem(ACTIVE_SESSION_KEY, session.id);
 }
 
 export async function loadActiveSessionId() {
   return (await Storage.getItem(ACTIVE_SESSION_KEY)) || 'default-session';
+}
+
+const CUSTOM_MODELS_KEY = 'custom-models-v1';
+
+export async function loadCustomModels(): Promise<ModelDefinition[]> {
+  try {
+    const value = await Storage.getItem(CUSTOM_MODELS_KEY);
+    if (!value) return [];
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter((model) => model && typeof model.id === 'string' && typeof model.url === 'string' && typeof model.filename === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function saveCustomModels(models: ModelDefinition[]) {
+  await Storage.setItem(CUSTOM_MODELS_KEY, JSON.stringify(models));
 }
 
 export async function saveActiveSessionId(sessionId: string) {
