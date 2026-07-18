@@ -1,4 +1,11 @@
 export type Sender = 'user' | 'assistant';
+export type ResponseMode = 'chat' | 'canvas' | 'auto';
+
+export type ChatSession = {
+  id: string;
+  title: string;
+  createdAt: number;
+};
 
 export type Message = {
   id: string;
@@ -10,6 +17,7 @@ export type Message = {
 
 export type Artifact = {
   id: string;
+  sessionId: string;
   title: string;
   html: string;
   createdAt: number;
@@ -43,6 +51,7 @@ export type GenerationSettings = {
   threads: number;
   gpuLayers: number;
   showThinking: boolean;
+  responseMode: ResponseMode;
   webSearchEnabled: boolean;
   webSearchDepth: 'basic' | 'advanced';
 };
