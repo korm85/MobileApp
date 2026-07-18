@@ -10,6 +10,7 @@
     "plugins": [
       "expo-sqlite",
       "expo-build-properties",
+      "@kesha-antonov/react-native-background-downloader",
       [
         "llama.rn",
         {
