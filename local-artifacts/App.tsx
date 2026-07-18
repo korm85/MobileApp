@@ -163,7 +163,12 @@ export default function App() {
           <Text style={[styles.brand, { color: theme.text }]}>LocalArtifacts</Text>
           <Text style={[styles.subtitle, { color: theme.muted }]}>{loadedModelId ? `${MODELS.find((model) => model.id === loadedModelId)?.name} · on device` : 'Private workspace · no cloud'}</Text>
         </View>
-        <View style={[styles.statusDot, { backgroundColor: loadedModelId ? theme.accent : theme.muted }]} />
+        <View style={styles.headerActions}>
+          <Pressable accessibilityLabel="Open model controls" onPress={() => setTab('settings')} style={[styles.headerControl, { backgroundColor: theme.accentSoft }]}>
+            <Text style={[styles.headerControlText, { color: theme.accent }]}>Controls</Text>
+          </Pressable>
+          <View style={[styles.statusDot, { backgroundColor: loadedModelId ? theme.accent : theme.muted }]} />
+        </View>
       </View>
 
       <View style={styles.content}>
@@ -177,7 +182,7 @@ export default function App() {
         <NavItem icon="⌂" label="Chat" active={tab === 'chat'} theme={theme} onPress={() => setTab('chat')} />
         <NavItem icon="▣" label="Artifacts" active={tab === 'artifacts'} theme={theme} onPress={() => setTab('artifacts')} />
         <NavItem icon="◈" label="Models" active={tab === 'models'} theme={theme} onPress={() => setTab('models')} />
-        <NavItem icon="⋯" label="Settings" active={tab === 'settings'} theme={theme} onPress={() => setTab('settings')} />
+        <NavItem icon="⚙" label="Controls" active={tab === 'settings'} theme={theme} onPress={() => setTab('settings')} />
       </View>
     </View>
   </SafeAreaView>;
@@ -291,7 +296,7 @@ function NavItem({ icon, label, active, theme, onPress }: { icon: string; label:
 
 const styles = StyleSheet.create({
   safe: { flex: 1 }, app: { flex: 1 }, flex: { flex: 1 }, center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  header: { minHeight: 66, paddingHorizontal: 18, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  header: { minHeight: 66, paddingHorizontal: 18, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, headerActions: { flexDirection: 'row', alignItems: 'center', gap: 12 }, headerControl: { paddingHorizontal: 11, paddingVertical: 7, borderRadius: 10 }, headerControlText: { fontSize: 12, fontWeight: '800' },
   brand: { fontSize: 20, fontWeight: '800', letterSpacing: -0.5 }, subtitle: { fontSize: 12, marginTop: 2 }, statusDot: { width: 9, height: 9, borderRadius: 5 }, content: { flex: 1 }, nav: { height: 70, borderTopWidth: StyleSheet.hairlineWidth, flexDirection: 'row', justifyContent: 'space-around', paddingTop: 8 }, navItem: { alignItems: 'center', minWidth: 70 }, navLabel: { fontSize: 11, marginTop: 2 },
   welcome: { padding: 24, alignItems: 'center', justifyContent: 'center', flexGrow: 1 }, welcomeMark: { width: 64, height: 64, borderRadius: 22, alignItems: 'center', justifyContent: 'center', marginBottom: 20 }, welcomeTitle: { fontSize: 26, fontWeight: '800', textAlign: 'center', letterSpacing: -0.7 }, welcomeCopy: { fontSize: 15, lineHeight: 22, maxWidth: 360, textAlign: 'center', marginTop: 10 }, suggestionWrap: { alignSelf: 'stretch', marginTop: 26, gap: 10 }, suggestion: { borderWidth: 1, borderRadius: 15, padding: 15, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, suggestionText: { fontSize: 14, flex: 1 }, outlineButton: { marginTop: 20, borderWidth: 1, paddingHorizontal: 18, paddingVertical: 12, borderRadius: 14 }, outlineButtonText: { fontWeight: '700' },
   messageList: { padding: 16, paddingBottom: 24 }, messageRow: { marginVertical: 5, flexDirection: 'row' }, userRow: { justifyContent: 'flex-end' }, assistantRow: { justifyContent: 'flex-start' }, bubble: { maxWidth: '88%', padding: 14, borderRadius: 18, borderWidth: 1 }, messageText: { fontSize: 16, lineHeight: 23 }, artifactChip: { marginTop: 12, borderRadius: 12, padding: 12, flexDirection: 'row', justifyContent: 'space-between', gap: 12 }, composerArea: { paddingHorizontal: 12, paddingTop: 6, paddingBottom: 7 }, composer: { minHeight: 54, maxHeight: 150, borderWidth: 1, borderRadius: 20, padding: 6, flexDirection: 'row', alignItems: 'flex-end' }, input: { flex: 1, fontSize: 16, maxHeight: 130, paddingHorizontal: 10, paddingVertical: 8 }, sendButton: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' }, composerHint: { textAlign: 'center', fontSize: 10, marginTop: 5 },
