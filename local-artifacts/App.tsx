@@ -17,7 +17,7 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { ArtifactRenderer } from './src/components/ArtifactRenderer';
 import { DEFAULT_GENERATION_SETTINGS, DEFAULT_SESSION_ID, MODELS } from './src/constants';
 import { useThrottledStream } from './src/hooks/useThrottledStream';
-import { createArtifact, parseArtifact } from './src/services/ArtifactParser';
+import { ArtifactStreamDetector, createArtifact, parseArtifact } from './src/services/ArtifactParser';
 import { LlamaService } from './src/services/LlamaService';
 import { downloadModel, getModelPath, modelExists, reattachExistingModelDownloads, subscribeModelDownloads } from './src/services/ModelService';
 import { initializeDatabase, loadArtifacts, loadGenerationSettings, loadMessages, saveArtifact, saveGenerationSettings, saveMessage } from './src/services/StorageService';
@@ -44,6 +44,7 @@ function AppContent() {
   const [isLoadingModel, setIsLoadingModel] = useState(false);
   const [settings, setSettings] = useState<GenerationSettings>({ ...DEFAULT_GENERATION_SETTINGS });
   const [initializing, setInitializing] = useState(true);
+  const [initializationError, setInitializationError] = useState<string | null>(null);
   const stream = useThrottledStream(80);
 
   useEffect(() => {
@@ -68,7 +69,13 @@ function AppContent() {
           if (await modelExists(model.filename)) existing[model.id] = { status: 'ready', progress: 1 };
         }
         if (mounted) setModelState(existing);
-        await reattachExistingModelDownloads();
+        try {
+          await reattachExistingModelDownloads();
+        } catch (error) {
+          console.warn('Could not reattach background model downloads', error);
+        }
+      } catch (error) {
+        setInitializationError(error instanceof Error ? error.message : 'Could not open the local workspace.');
       } finally {
         if (mounted) setInitializing(false);
       }
@@ -83,6 +90,8 @@ function AppContent() {
 
   const [streamMessageId, setStreamMessageId] = useState<string | null>(null);
   const streamMessageIdRef = React.useRef<string | null>(null);
+  const artifactDetectorRef = React.useRef(new ArtifactStreamDetector());
+  const activeArtifactRef = React.useRef<Artifact | null>(null);
   useEffect(() => { streamMessageIdRef.current = streamMessageId; }, [streamMessageId]);
 
   const sendMessage = async (text: string) => {
@@ -99,22 +108,39 @@ function AppContent() {
     setStreamMessageId(assistantId);
     streamMessageIdRef.current = assistantId;
     stream.reset();
+    artifactDetectorRef.current.reset();
+    activeArtifactRef.current = null;
 
     try {
       if (!loadedModelId) throw new Error('No local model is loaded. Open Models, download a model, and tap Load.');
       const history = messages.slice(-8).map((message) => ({ role: message.sender, content: message.content }));
-      const response = await LlamaService.getInstance().generateResponse(prompt, stream.append, history, settings);
-      const finalMessage = { ...assistantMessage, content: response };
-      setMessages((current) => current.map((message) => message.id === assistantId ? finalMessage : message));
-      await saveMessage(finalMessage);
-      const html = parseArtifact(response);
-      if (html) {
+      const publishArtifact = async (html: string) => {
+        if (activeArtifactRef.current) return activeArtifactRef.current;
         const artifact = createArtifact(html, assistantId);
-        await saveArtifact(artifact);
+        activeArtifactRef.current = artifact;
         setArtifacts((current) => [artifact, ...current]);
         setSelectedArtifact(artifact);
         setTab('artifacts');
-      }
+        try {
+          await saveArtifact(artifact);
+        } catch (error) {
+          console.warn('Artifact preview opened but could not be persisted', error);
+        }
+        return artifact;
+      };
+      let streamedResponse = '';
+      const onToken = (token: string) => {
+        streamedResponse += token;
+        stream.append(token);
+        const html = artifactDetectorRef.current.append(token);
+        if (html) void publishArtifact(html);
+      };
+      const response = await LlamaService.getInstance().generateResponse(prompt, onToken, history, settings);
+      const finalMessage = { ...assistantMessage, content: response };
+      setMessages((current) => current.map((message) => message.id === assistantId ? finalMessage : message));
+      await saveMessage(finalMessage);
+      const html = parseArtifact(response) ?? parseArtifact(streamedResponse);
+      if (html) await publishArtifact(html);
     } catch (error) {
       const content = error instanceof Error ? error.message : 'Local generation failed.';
       const errorMessage = { ...assistantMessage, content };
@@ -158,6 +184,7 @@ function AppContent() {
   };
 
   if (initializing) return <View style={[styles.center, { backgroundColor: theme.background }]}><ActivityIndicator color={theme.accent} /><Text style={[styles.muted, { color: theme.muted, marginTop: 12 }]}>Preparing your private workspace…</Text></View>;
+  if (initializationError) return <View style={[styles.center, { backgroundColor: theme.background, padding: 24 }]}><Text style={[styles.screenTitle, { color: theme.text, textAlign: 'center' }]}>Local workspace unavailable</Text><Text style={[styles.screenCopy, { color: theme.muted, textAlign: 'center' }]}>{initializationError}</Text></View>;
 
   return <SafeAreaView edges={['top', 'bottom']} style={[styles.safe, { backgroundColor: theme.background }]}>
     <StatusBar barStyle={systemScheme === 'light' ? 'dark-content' : 'light-content'} />
@@ -224,8 +251,8 @@ function ChatScreen({ messages, theme, busy, onSend, onOpenModels, onOpenArtifac
 
 function MessageBubble({ message, theme, artifacts, onOpenArtifact }: { message: Message; theme: AppTheme; artifacts: Artifact[]; onOpenArtifact: (artifact: Artifact) => void }) {
   const isUser = message.sender === 'user';
-  const hasArtifact = !isUser && Boolean(parseArtifact(message.content));
-  const artifact = hasArtifact ? artifacts.find((item) => item.sourceMessageId === message.id) : undefined;
+  const artifact = !isUser ? artifacts.find((item) => item.sourceMessageId === message.id) : undefined;
+  const hasArtifact = Boolean(artifact);
   const readable = isUser ? message.content : message.content.replace(/```[\s\S]*?```/g, '').replace(/^#{1,6}\s*/gm, '').replace(/\*\*(.*?)\*\*/g, '$1').trim();
   return <View style={[styles.messageRow, isUser ? styles.userRow : styles.assistantRow]}>
     <View style={[styles.bubble, { backgroundColor: isUser ? theme.userBubble : theme.assistantBubble, borderColor: theme.border }]}>
