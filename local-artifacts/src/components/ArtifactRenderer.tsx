@@ -3,6 +3,7 @@ import { StyleSheet, View } from 'react-native';
 import WebView, { WebViewMessageEvent } from 'react-native-webview';
 import { getSandboxBridgeScript } from '../services/bridgeScript';
 import { executeLocalDBWrite } from '../services/StorageService';
+import { ARTIFACT_RUNTIME } from '../services/artifactRuntime.generated';
 import { AppTheme } from '../types';
 
 export function ArtifactRenderer({ htmlContent, theme }: { htmlContent: string; theme: AppTheme }) {
@@ -10,7 +11,8 @@ export function ArtifactRenderer({ htmlContent, theme }: { htmlContent: string; 
   const source = useMemo(() => {
     const headAdditions = `<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
       <meta http-equiv="Content-Security-Policy" content="default-src 'none'; base-uri 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; font-src 'none';">
-      <style>html,body{margin:0;min-height:100%;background:${theme.background};color:${theme.text};}*{box-sizing:border-box}button,input,select{font:inherit}body{font-family:system-ui,-apple-system,sans-serif;padding:14px}</style>`;
+      <style>html,body{margin:0;min-height:100%;background:${theme.background};color:${theme.text};}*{box-sizing:border-box}button,input,select{font:inherit}body{font-family:system-ui,-apple-system,sans-serif;padding:14px}</style>
+      <script>${ARTIFACT_RUNTIME}</script>`;
     const trimmed = htmlContent.trim();
     if (/<html[\s>]/i.test(trimmed)) {
       if (/<head[\s>]/i.test(trimmed)) return trimmed.replace(/<head([^>]*)>/i, (match) => `${match}${headAdditions}`);
