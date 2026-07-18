@@ -1,11 +1,12 @@
 import * as SQLite from 'expo-sqlite';
 import Storage from 'expo-sqlite/kv-store';
 import * as SecureStore from 'expo-secure-store';
-import { Artifact, GenerationSettings, Message } from '../types';
+import { Artifact, ChatSession, GenerationSettings, Message } from '../types';
 import { DEFAULT_GENERATION_SETTINGS } from '../constants';
 
 const SETTINGS_KEY = 'generation-settings-v1';
 const TAVILY_API_KEY = 'tavily-api-key-v1';
+const ACTIVE_SESSION_KEY = 'active-session-v1';
 
 let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
@@ -30,6 +31,7 @@ async function getDb() {
     );
     CREATE TABLE IF NOT EXISTS artifacts (
       id TEXT PRIMARY KEY NOT NULL,
+      session_id TEXT,
       title TEXT NOT NULL,
       html TEXT NOT NULL,
       source_message_id TEXT,
@@ -42,6 +44,7 @@ async function getDb() {
       created_at INTEGER NOT NULL
     );
   `);
+  try { await db.execAsync('ALTER TABLE artifacts ADD COLUMN session_id TEXT'); } catch { /* Existing installs already have the column. */ }
   return db;
 }
 
@@ -53,6 +56,26 @@ export async function initializeDatabase() {
     'New conversation',
     Date.now(),
   );
+}
+
+export async function loadSessions(): Promise<ChatSession[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<{ id: string; title: string; created_at: number }>('SELECT id, title, created_at FROM sessions ORDER BY created_at DESC');
+  return rows.map((row) => ({ id: row.id, title: row.title, createdAt: row.created_at }));
+}
+
+export async function createSession(session: ChatSession) {
+  const db = await getDb();
+  await db.runAsync('INSERT OR REPLACE INTO sessions (id, title, created_at) VALUES (?, ?, ?)', session.id, session.title, session.createdAt);
+  await Storage.setItem(ACTIVE_SESSION_KEY, session.id);
+}
+
+export async function loadActiveSessionId() {
+  return (await Storage.getItem(ACTIVE_SESSION_KEY)) || 'default-session';
+}
+
+export async function saveActiveSessionId(sessionId: string) {
+  await Storage.setItem(ACTIVE_SESSION_KEY, sessionId);
 }
 
 export async function loadMessages(sessionId: string): Promise<Message[]> {
@@ -72,19 +95,19 @@ export async function saveMessage(message: Message) {
   );
 }
 
-export async function loadArtifacts(): Promise<Artifact[]> {
+export async function loadArtifacts(sessionId?: string): Promise<Artifact[]> {
   const db = await getDb();
-  const rows = await db.getAllAsync<{ id: string; title: string; html: string; source_message_id: string | null; created_at: number }>(
-    'SELECT id, title, html, source_message_id, created_at FROM artifacts ORDER BY created_at DESC',
-  );
-  return rows.map((row) => ({ id: row.id, title: row.title, html: row.html, sourceMessageId: row.source_message_id ?? undefined, createdAt: row.created_at }));
+  const rows = sessionId
+    ? await db.getAllAsync<{ id: string; session_id: string | null; title: string; html: string; source_message_id: string | null; created_at: number }>('SELECT id, session_id, title, html, source_message_id, created_at FROM artifacts WHERE session_id = ? OR session_id IS NULL ORDER BY created_at DESC', sessionId)
+    : await db.getAllAsync<{ id: string; session_id: string | null; title: string; html: string; source_message_id: string | null; created_at: number }>('SELECT id, session_id, title, html, source_message_id, created_at FROM artifacts ORDER BY created_at DESC');
+  return rows.map((row) => ({ id: row.id, sessionId: row.session_id ?? sessionId ?? 'default-session', title: row.title, html: row.html, sourceMessageId: row.source_message_id ?? undefined, createdAt: row.created_at }));
 }
 
 export async function saveArtifact(artifact: Artifact) {
   const db = await getDb();
   await db.runAsync(
-    'INSERT OR REPLACE INTO artifacts (id, title, html, source_message_id, created_at) VALUES (?, ?, ?, ?, ?)',
-    artifact.id, artifact.title, artifact.html, artifact.sourceMessageId ?? null, artifact.createdAt,
+    'INSERT OR REPLACE INTO artifacts (id, session_id, title, html, source_message_id, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+    artifact.id, artifact.sessionId, artifact.title, artifact.html, artifact.sourceMessageId ?? null, artifact.createdAt,
   );
 }
 
@@ -121,6 +144,7 @@ export async function loadGenerationSettings(): Promise<GenerationSettings> {
       threads: Math.round(numberOrDefault(saved.threads, DEFAULT_GENERATION_SETTINGS.threads, 1, 6)),
       gpuLayers: Math.round(numberOrDefault(saved.gpuLayers, DEFAULT_GENERATION_SETTINGS.gpuLayers, 0, 99)),
       showThinking: saved.showThinking === true,
+      responseMode: saved.responseMode === 'chat' || saved.responseMode === 'canvas' ? saved.responseMode : 'auto',
       webSearchEnabled: saved.webSearchEnabled === true,
       webSearchDepth: saved.webSearchDepth === 'advanced' ? 'advanced' : 'basic',
     };
