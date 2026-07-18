@@ -1,0 +1,33 @@
+{
+  "expo": {
+    "name": "PocketMind",
+    "slug": "local-artifacts",
+    "version": "1.0.5",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "scheme": "localartifacts",
+    "platforms": ["android"],
+    "plugins": [
+      "expo-sqlite",
+      "expo-build-properties",
+      "@kesha-antonov/react-native-background-downloader",
+      [
+        "llama.rn",
+        {
+          "enableEntitlements": true,
+          "entitlementsProfile": "production",
+          "forceCxx20": true,
+          "enableOpenCLAndHexagon": false
+        }
+      ]
+    ],
+    "android": {
+      "package": "com.localartifacts.app",
+      "versionCode": 5,
+      "permissions": [],
+      "adaptiveIcon": {
+        "backgroundColor": "#101114"
+      }
+    }
+  }
+}
