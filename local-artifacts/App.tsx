@@ -62,6 +62,7 @@ function AppContent() {
   const [isLoadingModel, setIsLoadingModel] = useState(false);
   const [settings, setSettings] = useState<GenerationSettings>({ ...DEFAULT_GENERATION_SETTINGS });
   const [tavilyApiKey, setTavilyApiKey] = useState('');
+  const [pendingAttachments, setPendingAttachments] = useState<MediaAttachment[]>([]);
   const [initializing, setInitializing] = useState(true);
   const [initializationError, setInitializationError] = useState<string | null>(null);
   const [appState, setAppState] = useState(AppState.currentState);
