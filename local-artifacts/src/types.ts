@@ -5,6 +5,10 @@ export type ChatSession = {
   id: string;
   title: string;
   createdAt: number;
+  webSearchEnabled: boolean;
+  webSearchDepth: 'basic' | 'advanced';
+  showThinking: boolean;
+  thinkingEnabled: boolean;
 };
 
 export type Message = {
@@ -34,6 +38,8 @@ export type ModelDefinition = {
   url: string;
   sizeLabel: string;
   recommended?: boolean;
+  supportsThinking?: boolean;
+  custom?: boolean;
 };
 
 export type ModelState = Record<string, {
