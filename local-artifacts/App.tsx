@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
+  AppState,
   ActivityIndicator,
   FlatList,
   KeyboardAvoidingView,
@@ -17,13 +18,13 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { ArtifactRenderer } from './src/components/ArtifactRenderer';
 import { DEFAULT_GENERATION_SETTINGS, DEFAULT_SESSION_ID, MODELS } from './src/constants';
 import { useThrottledStream } from './src/hooks/useThrottledStream';
-import { ArtifactStreamDetector, createArtifact, parseArtifact } from './src/services/ArtifactParser';
+import { ArtifactStreamDetector, createArtifact, parseArtifactProtocol, stripArtifactProtocol } from './src/services/ArtifactParser';
 import { LlamaService } from './src/services/LlamaService';
 import { downloadModel, getModelPath, modelExists, reattachExistingModelDownloads, subscribeModelDownloads } from './src/services/ModelService';
-import { initializeDatabase, loadArtifacts, loadGenerationSettings, loadMessages, loadTavilyApiKey, saveArtifact, saveGenerationSettings, saveMessage, saveTavilyApiKey } from './src/services/StorageService';
+import { createSession, initializeDatabase, loadActiveSessionId, loadArtifacts, loadGenerationSettings, loadMessages, loadSessions, loadTavilyApiKey, saveActiveSessionId, saveArtifact, saveGenerationSettings, saveMessage, saveTavilyApiKey } from './src/services/StorageService';
 import { formatSearchContext, formatSourcesForMessage, searchWeb, WebSearchResponse } from './src/services/WebSearchService';
 import { darkTheme, lightTheme } from './src/theme';
-import { AppTheme, Artifact, GenerationSettings, Message, ModelState } from './src/types';
+import { AppTheme, Artifact, ChatSession, GenerationSettings, Message, ModelState } from './src/types';
 
 type Tab = 'chat' | 'artifacts' | 'models' | 'settings';
 
@@ -37,6 +38,8 @@ function AppContent() {
   const systemScheme = useColorScheme();
   const theme = systemScheme === 'light' ? lightTheme : darkTheme;
   const [tab, setTab] = useState<Tab>('chat');
+  const [activeSessionId, setActiveSessionId] = useState(DEFAULT_SESSION_ID);
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   const [selectedArtifact, setSelectedArtifact] = useState<Artifact | null>(null);
@@ -47,6 +50,7 @@ function AppContent() {
   const [tavilyApiKey, setTavilyApiKey] = useState('');
   const [initializing, setInitializing] = useState(true);
   const [initializationError, setInitializationError] = useState<string | null>(null);
+  const [appState, setAppState] = useState(AppState.currentState);
   const stream = useThrottledStream(80);
 
   useEffect(() => {
@@ -61,8 +65,12 @@ function AppContent() {
     (async () => {
       try {
         await initializeDatabase();
-        const [savedMessages, savedArtifacts, savedSettings, savedTavilyApiKey] = await Promise.all([loadMessages(DEFAULT_SESSION_ID), loadArtifacts(), loadGenerationSettings(), loadTavilyApiKey()]);
+        const [savedSettings, savedTavilyApiKey, savedSessions, savedActiveSessionId] = await Promise.all([loadGenerationSettings(), loadTavilyApiKey(), loadSessions(), loadActiveSessionId()]);
         if (!mounted) return;
+        const sessionId = savedSessions.some((session) => session.id === savedActiveSessionId) ? savedActiveSessionId : DEFAULT_SESSION_ID;
+        const [savedMessages, savedArtifacts] = await Promise.all([loadMessages(sessionId), loadArtifacts(sessionId)]);
+        setActiveSessionId(sessionId);
+        setSessions(savedSessions);
         setMessages(savedMessages);
         setArtifacts(savedArtifacts);
         setSettings(savedSettings);
@@ -87,6 +95,11 @@ function AppContent() {
   }, []);
 
   useEffect(() => {
+    const subscription = AppState.addEventListener('change', setAppState);
+    return () => subscription.remove();
+  }, []);
+
+  useEffect(() => {
     if (!stream.text) return;
     setMessages((current) => current.map((message) => message.id === streamMessageIdRef.current ? { ...message, content: stream.text } : message));
   }, [stream.text]);
@@ -95,21 +108,24 @@ function AppContent() {
   const streamMessageIdRef = React.useRef<string | null>(null);
   const artifactDetectorRef = React.useRef(new ArtifactStreamDetector());
   const activeArtifactRef = React.useRef<Artifact | null>(null);
+  const generationSessionRef = React.useRef<string | null>(null);
   useEffect(() => { streamMessageIdRef.current = streamMessageId; }, [streamMessageId]);
 
   const sendMessage = async (text: string) => {
     const prompt = text.trim();
     if (!prompt || streamMessageIdRef.current) return;
+    const sessionId = activeSessionId;
     const createdAt = Date.now();
-    const userMessage: Message = { id: uid('user'), sessionId: DEFAULT_SESSION_ID, sender: 'user', content: prompt, createdAt };
+    const userMessage: Message = { id: uid('user'), sessionId, sender: 'user', content: prompt, createdAt };
     setMessages((current) => [...current, userMessage]);
     await saveMessage(userMessage);
 
     const assistantId = uid('assistant');
-    const assistantMessage: Message = { id: assistantId, sessionId: DEFAULT_SESSION_ID, sender: 'assistant', content: '', createdAt: createdAt + 1 };
+    const assistantMessage: Message = { id: assistantId, sessionId, sender: 'assistant', content: '', createdAt: createdAt + 1 };
     setMessages((current) => [...current, assistantMessage]);
     setStreamMessageId(assistantId);
     streamMessageIdRef.current = assistantId;
+    generationSessionRef.current = sessionId;
     stream.reset();
     artifactDetectorRef.current.reset();
     activeArtifactRef.current = null;
@@ -117,13 +133,16 @@ function AppContent() {
     try {
       if (!loadedModelId) throw new Error('No local model is loaded. Open Models, download a model, and tap Load.');
       const history = messages.slice(-8).map((message) => ({ role: message.sender, content: message.content }));
-      const publishArtifact = async (html: string) => {
+      const publishArtifact = async (parsed: ReturnType<typeof parseArtifactProtocol>) => {
+        if (!parsed) return null;
         if (activeArtifactRef.current) return activeArtifactRef.current;
-        const artifact = createArtifact(html, assistantId);
+        const artifact = createArtifact(parsed, sessionId, assistantId);
         activeArtifactRef.current = artifact;
-        setArtifacts((current) => [artifact, ...current]);
-        setSelectedArtifact(artifact);
-        setTab('artifacts');
+        if (activeSessionId === sessionId) {
+          setArtifacts((current) => [artifact, ...current]);
+          setSelectedArtifact(artifact);
+          setTab('artifacts');
+        }
         try {
           await saveArtifact(artifact);
         } catch (error) {
@@ -135,8 +154,10 @@ function AppContent() {
       const onToken = (token: string) => {
         streamedResponse += token;
         stream.append(token);
-        const html = artifactDetectorRef.current.append(token);
-        if (html) void publishArtifact(html);
+        if (settings.responseMode !== 'chat') {
+          const parsed = artifactDetectorRef.current.append(token);
+          if (parsed) void publishArtifact(parsed);
+        }
       };
       let generationPrompt = prompt;
       let searchResponse: WebSearchResponse | null = null;
@@ -148,11 +169,12 @@ function AppContent() {
       }
       const response = await LlamaService.getInstance().generateResponse(generationPrompt, onToken, history, settings);
       const sources = searchResponse ? formatSourcesForMessage(searchResponse) : '';
-      const finalMessage = { ...assistantMessage, content: `${response.trim()}${sources}` };
+      const parsed = settings.responseMode !== 'chat' ? (parseArtifactProtocol(response) ?? parseArtifactProtocol(streamedResponse)) : null;
+      if (parsed) await publishArtifact(parsed);
+      const readableResponse = stripArtifactProtocol(response).trim();
+      const finalMessage = { ...assistantMessage, content: `${readableResponse || (parsed ? `Created ${parsed.title}.` : 'Done.')}${sources}` };
       setMessages((current) => current.map((message) => message.id === assistantId ? finalMessage : message));
       await saveMessage(finalMessage);
-      const html = parseArtifact(response) ?? parseArtifact(streamedResponse);
-      if (html) await publishArtifact(html);
     } catch (error) {
       const content = error instanceof Error ? error.message : 'Local generation failed.';
       const errorMessage = { ...assistantMessage, content };
@@ -161,6 +183,7 @@ function AppContent() {
     } finally {
       setStreamMessageId(null);
       streamMessageIdRef.current = null;
+      generationSessionRef.current = null;
     }
   };
 
@@ -201,6 +224,26 @@ function AppContent() {
     await searchWeb('PocketMind web search connection test', settings.webSearchDepth, apiKeyOverride);
   };
 
+  const startNewChat = async () => {
+    if (streamMessageIdRef.current) return;
+    const session: ChatSession = { id: uid('session'), title: 'New conversation', createdAt: Date.now() };
+    await createSession(session);
+    await saveActiveSessionId(session.id);
+    setSessions((current) => [session, ...current]);
+    setActiveSessionId(session.id);
+    setMessages([]);
+    setArtifacts([]);
+    setSelectedArtifact(null);
+    setTab('chat');
+  };
+
+  const toggleCanvasMode = async () => {
+    const responseMode: GenerationSettings['responseMode'] = settings.responseMode === 'canvas' ? 'auto' : 'canvas';
+    const next = { ...settings, responseMode };
+    setSettings(next);
+    await saveGenerationSettings(next);
+  };
+
   if (initializing) return <View style={[styles.center, { backgroundColor: theme.background }]}><ActivityIndicator color={theme.accent} /><Text style={[styles.muted, { color: theme.muted, marginTop: 12 }]}>Preparing your private workspace…</Text></View>;
   if (initializationError) return <View style={[styles.center, { backgroundColor: theme.background, padding: 24 }]}><Text style={[styles.screenTitle, { color: theme.text, textAlign: 'center' }]}>Local workspace unavailable</Text><Text style={[styles.screenCopy, { color: theme.muted, textAlign: 'center' }]}>{initializationError}</Text></View>;
 
@@ -210,9 +253,12 @@ function AppContent() {
       <View style={[styles.header, { borderBottomColor: theme.border }]}>
         <View>
           <Text style={[styles.brand, { color: theme.text }]}>PocketMind</Text>
-          <Text style={[styles.subtitle, { color: theme.muted }]}>{loadedModelId ? `${MODELS.find((model) => model.id === loadedModelId)?.name} · on device` : 'Private workspace · no cloud'}</Text>
+          <Text style={[styles.subtitle, { color: theme.muted }]}>{streamMessageId ? `Generating · ${appState === 'active' ? 'active' : 'continuing'}` : loadedModelId ? `${MODELS.find((model) => model.id === loadedModelId)?.name} · on device` : 'Private workspace · no cloud'}</Text>
         </View>
         <View style={styles.headerActions}>
+          <Pressable accessibilityLabel="Start a new chat" disabled={Boolean(streamMessageId)} onPress={startNewChat} style={[styles.headerControl, { backgroundColor: theme.surfaceRaised, opacity: streamMessageId ? 0.5 : 1 }]}>
+            <Text style={[styles.headerControlText, { color: theme.text }]}>New chat</Text>
+          </Pressable>
           <Pressable accessibilityLabel="Open model controls" onPress={() => setTab('settings')} style={[styles.headerControl, { backgroundColor: theme.accentSoft }]}>
             <Text style={[styles.headerControlText, { color: theme.accent }]}>Controls</Text>
           </Pressable>
@@ -221,7 +267,7 @@ function AppContent() {
       </View>
 
       <View style={styles.content}>
-        {tab === 'chat' && <ChatScreen messages={messages} theme={theme} busy={Boolean(streamMessageId)} onSend={sendMessage} onOpenModels={() => setTab('models')} onOpenArtifact={(artifact) => { setSelectedArtifact(artifact); setTab('artifacts'); }} artifacts={artifacts} />}
+        {tab === 'chat' && <ChatScreen messages={messages} theme={theme} busy={Boolean(streamMessageId)} responseMode={settings.responseMode} onToggleCanvas={toggleCanvasMode} onSend={sendMessage} onOpenModels={() => setTab('models')} onOpenArtifact={(artifact) => { setSelectedArtifact(artifact); setTab('artifacts'); }} artifacts={artifacts} />}
         {tab === 'artifacts' && <ArtifactsScreen artifacts={artifacts} selected={selectedArtifact} theme={theme} onSelect={setSelectedArtifact} />}
         {tab === 'models' && <ModelsScreen theme={theme} states={modelState} loadedModelId={loadedModelId} loading={isLoadingModel} onDownload={handleDownload} onLoad={handleLoad} />}
         {tab === 'settings' && <SettingsScreen theme={theme} settings={settings} tavilyApiKey={tavilyApiKey} onSave={handleSaveSettings} onTestSearch={handleTestSearch} />}
@@ -237,7 +283,7 @@ function AppContent() {
   </SafeAreaView>;
 }
 
-function ChatScreen({ messages, theme, busy, onSend, onOpenModels, onOpenArtifact, artifacts }: { messages: Message[]; theme: AppTheme; busy: boolean; onSend: (text: string) => Promise<void>; onOpenModels: () => void; onOpenArtifact: (artifact: Artifact) => void; artifacts: Artifact[] }) {
+function ChatScreen({ messages, theme, busy, responseMode, onToggleCanvas, onSend, onOpenModels, onOpenArtifact, artifacts }: { messages: Message[]; theme: AppTheme; busy: boolean; responseMode: GenerationSettings['responseMode']; onToggleCanvas: () => Promise<void>; onSend: (text: string) => Promise<void>; onOpenModels: () => void; onOpenArtifact: (artifact: Artifact) => void; artifacts: Artifact[] }) {
   const [input, setInput] = useState('');
   const canSend = input.trim().length > 0 && !busy;
   const suggestions = ['Track my expenses this month', 'Build a 5/3/1 workout tracker', 'Create a simple game for my girls'];
@@ -258,11 +304,16 @@ function ChatScreen({ messages, theme, busy, onSend, onOpenModels, onOpenArtifac
       renderItem={({ item }) => <MessageBubble message={item} theme={theme} artifacts={artifacts} onOpenArtifact={onOpenArtifact} />}
     />}
     <View style={[styles.composerArea, { backgroundColor: theme.background }]}>
+      <View style={styles.composerToolbar}>
+        <Pressable onPress={() => void onToggleCanvas()} style={[styles.modeChip, { borderColor: responseMode === 'canvas' ? theme.accent : theme.border, backgroundColor: responseMode === 'canvas' ? theme.accentSoft : theme.surface }]}>
+          <Text style={{ color: responseMode === 'canvas' ? theme.accent : theme.muted, fontSize: 12, fontWeight: '800' }}>{responseMode === 'canvas' ? 'Canvas on' : responseMode === 'auto' ? 'Canvas auto' : 'Canvas off'}</Text>
+        </Pressable>
+        <Text style={[styles.composerHint, { color: theme.muted }]}>{busy ? 'Generating locally; you can change screens…' : 'Local model · no data leaves this device'}</Text>
+      </View>
       <View style={[styles.composer, { backgroundColor: theme.surface, borderColor: theme.border }]}>
         <TextInput value={input} onChangeText={setInput} placeholder="Ask or describe what to build…" placeholderTextColor={theme.muted} multiline maxLength={6000} style={[styles.input, { color: theme.text }]} onSubmitEditing={submit} />
         <Pressable accessibilityLabel="Send" disabled={!canSend} onPress={submit} style={[styles.sendButton, { backgroundColor: canSend ? theme.accent : theme.surfaceRaised }]}><Text style={{ color: canSend ? '#101114' : theme.muted, fontSize: 20 }}>↑</Text></Pressable>
       </View>
-      <Text style={[styles.composerHint, { color: theme.muted }]}>{busy ? 'Generating locally…' : 'Local model · no data leaves this device'}</Text>
     </View>
   </KeyboardAvoidingView>;
 }
@@ -271,7 +322,7 @@ function MessageBubble({ message, theme, artifacts, onOpenArtifact }: { message:
   const isUser = message.sender === 'user';
   const artifact = !isUser ? artifacts.find((item) => item.sourceMessageId === message.id) : undefined;
   const hasArtifact = Boolean(artifact);
-  const readable = isUser ? message.content : message.content.replace(/```[\s\S]*?```/g, '').replace(/^#{1,6}\s*/gm, '').replace(/\*\*(.*?)\*\*/g, '$1').trim();
+  const readable = isUser ? message.content : stripArtifactProtocol(message.content).trim();
   return <View style={[styles.messageRow, isUser ? styles.userRow : styles.assistantRow]}>
     <View style={[styles.bubble, { backgroundColor: isUser ? theme.userBubble : theme.assistantBubble, borderColor: theme.border }]}>
       {!!readable && <Text style={[styles.messageText, { color: theme.text }]}>{readable}</Text>}
@@ -332,6 +383,12 @@ function SettingsScreen({ theme, settings, tavilyApiKey, onSave, onTestSearch }:
     <Text style={[styles.settingsLabel, { color: theme.muted }]}>System prompt</Text>
     <TextInput value={draft.systemPrompt} onChangeText={(systemPrompt) => { setDraft((current) => ({ ...current, systemPrompt })); setSaved(false); }} placeholder="Leave empty to use the built-in PocketMind prompt" placeholderTextColor={theme.muted} multiline textAlignVertical="top" style={[styles.settingsInput, { color: theme.text, backgroundColor: theme.surface, borderColor: theme.border }]} />
 
+    <Text style={[styles.settingsLabel, { color: theme.muted, marginTop: 18 }]}>Response mode</Text>
+    <View style={[styles.modeSelector, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+      {(['chat', 'auto', 'canvas'] as const).map((mode) => <Pressable key={mode} onPress={() => { setDraft((current) => ({ ...current, responseMode: mode })); setSaved(false); }} style={[styles.modeOption, { backgroundColor: draft.responseMode === mode ? theme.accent : 'transparent' }]}><Text style={{ color: draft.responseMode === mode ? '#101114' : theme.muted, fontWeight: '800', fontSize: 12 }}>{mode === 'chat' ? 'Chat' : mode === 'canvas' ? 'Canvas' : 'Auto'}</Text></Pressable>)}
+    </View>
+    <Text style={[styles.cardMeta, { color: theme.muted }]}>Canvas requires the structured artifact envelope. Auto creates one only when the request clearly asks for an interactive visual result.</Text>
+
     <Text style={[styles.settingsSection, { color: theme.text }]}>Generation</Text>
     <SettingStepper theme={theme} title="Temperature" description="Higher values are more varied; lower values are more predictable." value={draft.temperature} step={0.1} decimals={1} onChange={(delta) => updateNumber('temperature', delta, 0, 1.5)} />
     <SettingStepper theme={theme} title="Top P" description="Controls the probability range used for the next token." value={draft.topP} step={0.05} decimals={2} onChange={(delta) => updateNumber('topP', delta, 0.1, 1)} />
@@ -379,8 +436,8 @@ const styles = StyleSheet.create({
   header: { minHeight: 66, paddingHorizontal: 18, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, headerActions: { flexDirection: 'row', alignItems: 'center', gap: 12 }, headerControl: { paddingHorizontal: 11, paddingVertical: 7, borderRadius: 10 }, headerControlText: { fontSize: 12, fontWeight: '800' },
   brand: { fontSize: 20, fontWeight: '800', letterSpacing: -0.5 }, subtitle: { fontSize: 12, marginTop: 2 }, statusDot: { width: 9, height: 9, borderRadius: 5 }, content: { flex: 1 }, nav: { height: 70, borderTopWidth: StyleSheet.hairlineWidth, flexDirection: 'row', justifyContent: 'space-around', paddingTop: 8 }, navItem: { alignItems: 'center', minWidth: 70 }, navLabel: { fontSize: 11, marginTop: 2 },
   welcome: { padding: 24, alignItems: 'center', justifyContent: 'center', flexGrow: 1 }, welcomeMark: { width: 64, height: 64, borderRadius: 22, alignItems: 'center', justifyContent: 'center', marginBottom: 20 }, welcomeTitle: { fontSize: 26, fontWeight: '800', textAlign: 'center', letterSpacing: -0.7 }, welcomeCopy: { fontSize: 15, lineHeight: 22, maxWidth: 360, textAlign: 'center', marginTop: 10 }, suggestionWrap: { alignSelf: 'stretch', marginTop: 26, gap: 10 }, suggestion: { borderWidth: 1, borderRadius: 15, padding: 15, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, suggestionText: { fontSize: 14, flex: 1 }, outlineButton: { marginTop: 20, borderWidth: 1, paddingHorizontal: 18, paddingVertical: 12, borderRadius: 14 }, outlineButtonText: { fontWeight: '700' },
-  messageList: { padding: 16, paddingBottom: 24 }, messageRow: { marginVertical: 5, flexDirection: 'row' }, userRow: { justifyContent: 'flex-end' }, assistantRow: { justifyContent: 'flex-start' }, bubble: { maxWidth: '88%', padding: 14, borderRadius: 18, borderWidth: 1 }, messageText: { fontSize: 16, lineHeight: 23 }, artifactChip: { marginTop: 12, borderRadius: 12, padding: 12, flexDirection: 'row', justifyContent: 'space-between', gap: 12 }, composerArea: { paddingHorizontal: 12, paddingTop: 6, paddingBottom: 7 }, composer: { minHeight: 54, maxHeight: 150, borderWidth: 1, borderRadius: 20, padding: 6, flexDirection: 'row', alignItems: 'flex-end' }, input: { flex: 1, fontSize: 16, maxHeight: 130, paddingHorizontal: 10, paddingVertical: 8 }, sendButton: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' }, composerHint: { textAlign: 'center', fontSize: 10, marginTop: 5 },
+  messageList: { padding: 16, paddingBottom: 24 }, messageRow: { marginVertical: 5, flexDirection: 'row' }, userRow: { justifyContent: 'flex-end' }, assistantRow: { justifyContent: 'flex-start' }, bubble: { maxWidth: '88%', padding: 14, borderRadius: 18, borderWidth: 1 }, messageText: { fontSize: 16, lineHeight: 23 }, artifactChip: { marginTop: 12, borderRadius: 12, padding: 12, flexDirection: 'row', justifyContent: 'space-between', gap: 12 }, composerArea: { paddingHorizontal: 12, paddingTop: 6, paddingBottom: 7 }, composerToolbar: { minHeight: 28, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, modeChip: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 6 }, composer: { minHeight: 54, maxHeight: 150, borderWidth: 1, borderRadius: 20, padding: 6, flexDirection: 'row', alignItems: 'flex-end' }, input: { flex: 1, fontSize: 16, maxHeight: 130, paddingHorizontal: 10, paddingVertical: 8 }, sendButton: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' }, composerHint: { textAlign: 'center', fontSize: 10, marginTop: 5 },
   screenPadding: { padding: 18, paddingBottom: 30 }, screenTitle: { fontSize: 28, fontWeight: '800', letterSpacing: -0.7 }, screenCopy: { fontSize: 14, lineHeight: 20, marginTop: 6 }, artifactCard: { marginTop: 12, padding: 14, borderWidth: 1, borderRadius: 17, flexDirection: 'row', alignItems: 'center', gap: 12 }, artifactIcon: { width: 42, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center' }, cardTitle: { fontSize: 15, fontWeight: '700' }, cardMeta: { fontSize: 12, marginTop: 4 }, subHeader: { height: 54, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, back: { fontSize: 15, fontWeight: '700', width: 70 }, subHeaderTitle: { fontSize: 15, fontWeight: '700', flex: 1, textAlign: 'center' },
   modelCard: { marginTop: 14, padding: 16, borderWidth: 1, borderRadius: 18 }, modelTop: { flexDirection: 'row', alignItems: 'flex-start' }, row: { flexDirection: 'row', alignItems: 'center', gap: 7 }, recommended: { fontSize: 10, fontWeight: '700', paddingHorizontal: 6, paddingVertical: 3, borderRadius: 6 }, modelDescription: { fontSize: 13, lineHeight: 19, marginTop: 9 }, notice: { padding: 14, borderRadius: 15, marginTop: 18 }, noticeCopy: { fontSize: 12, lineHeight: 18, marginTop: 5 }, progressTrack: { height: 6, borderRadius: 3, overflow: 'hidden', marginTop: 14 }, progressFill: { height: 6, borderRadius: 3 }, modelActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8, marginTop: 16 }, smallButton: { minWidth: 100, minHeight: 40, borderWidth: 1, borderRadius: 12, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12 }, errorText: { fontSize: 11, marginTop: 10 },
-  settingRow: { paddingVertical: 16, borderBottomWidth: StyleSheet.hairlineWidth }, settingsSection: { fontSize: 17, fontWeight: '800', marginTop: 24, marginBottom: 10 }, settingsLabel: { fontSize: 13, fontWeight: '700', marginBottom: 7 }, settingsInput: { minHeight: 130, borderWidth: 1, borderRadius: 14, padding: 12, fontSize: 14, lineHeight: 20 }, stepper: { paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth, flexDirection: 'row', alignItems: 'center', gap: 10 }, stepperControls: { flexDirection: 'row', alignItems: 'center', gap: 7 }, stepperButton: { width: 34, height: 34, borderRadius: 10, alignItems: 'center', justifyContent: 'center' }, stepperValue: { minWidth: 48, textAlign: 'center', fontSize: 14, fontWeight: '700' }, toggleRow: { paddingVertical: 16, borderBottomWidth: StyleSheet.hairlineWidth, flexDirection: 'row', alignItems: 'center', gap: 12 }, toggleTrack: { width: 50, height: 30, borderRadius: 15, padding: 3, justifyContent: 'center' }, toggleThumb: { width: 24, height: 24, borderRadius: 12 }, saveButton: { minHeight: 48, marginTop: 24, borderRadius: 14, alignItems: 'center', justifyContent: 'center' }, saveText: { color: '#101114', fontSize: 15, fontWeight: '800' }, empty: { alignItems: 'center', paddingHorizontal: 20, marginTop: 90 }, emptyIcon: { fontSize: 42, marginBottom: 14 }, muted: { fontSize: 14 },
+  settingRow: { paddingVertical: 16, borderBottomWidth: StyleSheet.hairlineWidth }, settingsSection: { fontSize: 17, fontWeight: '800', marginTop: 24, marginBottom: 10 }, settingsLabel: { fontSize: 13, fontWeight: '700', marginBottom: 7 }, settingsInput: { minHeight: 130, borderWidth: 1, borderRadius: 14, padding: 12, fontSize: 14, lineHeight: 20 }, modeSelector: { flexDirection: 'row', borderWidth: 1, borderRadius: 14, padding: 4, gap: 4 }, modeOption: { flex: 1, minHeight: 38, borderRadius: 10, alignItems: 'center', justifyContent: 'center' }, stepper: { paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth, flexDirection: 'row', alignItems: 'center', gap: 10 }, stepperControls: { flexDirection: 'row', alignItems: 'center', gap: 7 }, stepperButton: { width: 34, height: 34, borderRadius: 10, alignItems: 'center', justifyContent: 'center' }, stepperValue: { minWidth: 48, textAlign: 'center', fontSize: 14, fontWeight: '700' }, toggleRow: { paddingVertical: 16, borderBottomWidth: StyleSheet.hairlineWidth, flexDirection: 'row', alignItems: 'center', gap: 12 }, toggleTrack: { width: 50, height: 30, borderRadius: 15, padding: 3, justifyContent: 'center' }, toggleThumb: { width: 24, height: 24, borderRadius: 12 }, saveButton: { minHeight: 48, marginTop: 24, borderRadius: 14, alignItems: 'center', justifyContent: 'center' }, saveText: { color: '#101114', fontSize: 15, fontWeight: '800' }, empty: { alignItems: 'center', paddingHorizontal: 20, marginTop: 90 }, emptyIcon: { fontSize: 42, marginBottom: 14 }, muted: { fontSize: 14 },
 });
