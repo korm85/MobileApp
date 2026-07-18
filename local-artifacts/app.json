@@ -1,0 +1,33 @@
+{
+  "expo": {
+    "name": "PocketMind",
+    "slug": "pocketmind",
+    "version": "1.0.6",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "scheme": "pocketmind",
+    "platforms": ["android"],
+    "plugins": [
+      "expo-sqlite",
+      "expo-build-properties",
+      "@kesha-antonov/react-native-background-downloader",
+      [
+        "llama.rn",
+        {
+          "enableEntitlements": true,
+          "entitlementsProfile": "production",
+          "forceCxx20": true,
+          "enableOpenCLAndHexagon": false
+        }
+      ]
+    ],
+    "android": {
+      "package": "com.pocketmind.app",
+      "versionCode": 6,
+      "permissions": [],
+      "adaptiveIcon": {
+        "backgroundColor": "#101114"
+      }
+    }
+  }
+}
