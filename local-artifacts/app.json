@@ -10,6 +10,15 @@
     "plugins": [
       "expo-sqlite",
       "expo-build-properties",
+      "expo-document-picker",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "PocketMind uses your photos when you attach an image to a private chat.",
+          "cameraPermission": "PocketMind uses your camera when you attach a photo to a private chat.",
+          "microphonePermission": false
+        }
+      ],
       "@kesha-antonov/react-native-background-downloader",
       [
         "llama.rn",
@@ -23,7 +32,7 @@
     ],
     "android": {
       "package": "com.pocketmind.app",
-      "versionCode": 6,
+      "versionCode": 7,
       "permissions": [],
       "adaptiveIcon": {
         "backgroundColor": "#101114"
