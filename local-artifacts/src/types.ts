@@ -43,6 +43,8 @@ export type GenerationSettings = {
   threads: number;
   gpuLayers: number;
   showThinking: boolean;
+  webSearchEnabled: boolean;
+  webSearchDepth: 'basic' | 'advanced';
 };
 
 export type AppTheme = {
