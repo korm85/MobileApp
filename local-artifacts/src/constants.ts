@@ -7,25 +7,46 @@ export const DEFAULT_CHAT_CONTROLS = {
   thinkingEnabled: false,
 } as const;
 
+const UNSLOTH_E2B = 'https://huggingface.co/unsloth/gemma-4-E2B-it-qat-GGUF/resolve/main/';
+const UNSLOTH_E4B = 'https://huggingface.co/unsloth/gemma-4-E4B-it-qat-GGUF/resolve/main/';
+
 export const MODELS: ModelDefinition[] = [
   {
     id: 'gemma-4-e2b-qat',
     name: 'Gemma 4 E2B QAT · best mobile balance',
-    description: 'Unsloth Dynamic 2.0 QAT GGUF with the best E2B quality, speed and memory balance for on-device chat.',
+    description: 'Unsloth Dynamic 2.0 QAT GGUF with vision, audio and optional MTP acceleration for on-device chat.',
     filename: 'gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf',
-    url: 'https://huggingface.co/unsloth/gemma-4-E2B-it-qat-GGUF/resolve/main/gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf',
-    sizeLabel: 'about 2.62 GB',
+    url: UNSLOTH_E2B + 'gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf',
+    sizeLabel: '2.62 GB',
+    mmprojFilename: 'mmproj-BF16.gguf',
+    mmprojUrl: UNSLOTH_E2B + 'mmproj-BF16.gguf',
+    mmprojSizeLabel: '987 MB vision/audio projector',
+    mtpFilename: 'mtp-gemma-4-E2B-it.gguf',
+    mtpUrl: UNSLOTH_E2B + 'mtp-gemma-4-E2B-it.gguf',
+    mtpSizeLabel: '59 MB MTP speed-up',
     recommended: true,
     supportsThinking: true,
+    supportsVision: true,
+    supportsAudio: true,
+    supportsMtp: true,
   },
   {
     id: 'gemma-4-e4b-qat',
     name: 'Gemma 4 E4B QAT',
-    description: 'Best starting point for Hebrew + English and structured reasoning.',
+    description: 'Larger Unsloth Dynamic 2.0 QAT model with vision, audio and optional MTP acceleration.',
     filename: 'gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf',
-    url: 'https://huggingface.co/unsloth/gemma-4-E4B-it-qat-GGUF/resolve/main/gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf',
-    sizeLabel: 'about 3.2 GB',
+    url: UNSLOTH_E4B + 'gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf',
+    sizeLabel: '4.22 GB',
+    mmprojFilename: 'mmproj-BF16.gguf',
+    mmprojUrl: UNSLOTH_E4B + 'mmproj-BF16.gguf',
+    mmprojSizeLabel: '992 MB vision/audio projector',
+    mtpFilename: 'mtp-gemma-4-E4B-it.gguf',
+    mtpUrl: UNSLOTH_E4B + 'mtp-gemma-4-E4B-it.gguf',
+    mtpSizeLabel: '60 MB MTP speed-up',
     supportsThinking: true,
+    supportsVision: true,
+    supportsAudio: true,
+    supportsMtp: true,
   },
   {
     id: 'qwen-3-5-4b',
