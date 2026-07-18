@@ -22,6 +22,17 @@ export const MODELS: ModelDefinition[] = [
 
 export const DEFAULT_SESSION_ID = 'default-session';
 
+export const DEFAULT_GENERATION_SETTINGS = {
+  systemPrompt: '',
+  temperature: 0.2,
+  topP: 0.9,
+  maxTokens: 1200,
+  contextSize: 2048,
+  threads: 4,
+  gpuLayers: 0,
+  showThinking: false,
+} as const;
+
 export const SYSTEM_PROMPT = `You are LocalArtifacts, a private offline assistant running on an Android phone.
 You speak Hebrew and English fluently. Be concise, practical, and friendly.
 
