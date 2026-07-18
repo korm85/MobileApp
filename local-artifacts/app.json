@@ -1,11 +1,11 @@
 {
   "expo": {
     "name": "PocketMind",
-    "slug": "local-artifacts",
+    "slug": "pocketmind",
     "version": "1.0.6",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
-    "scheme": "localartifacts",
+    "scheme": "pocketmind",
     "platforms": ["android"],
     "plugins": [
       "expo-sqlite",
@@ -22,7 +22,7 @@
       ]
     ],
     "android": {
-      "package": "com.localartifacts.app",
+      "package": "com.pocketmind.app",
       "versionCode": 6,
       "permissions": [],
       "adaptiveIcon": {
