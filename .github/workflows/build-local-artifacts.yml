@@ -1,12 +1,10 @@
-name: Build LocalArtifacts APK
+name: Build PocketMind APK
 
 on:
   push:
     branches:
       - codex/local-artifacts-apk
-  pull_request:
-    branches:
-      - main
+      - codex/pocketmind-complete-apk
   workflow_dispatch:
 
 jobs:
@@ -38,11 +36,11 @@ jobs:
       - name: Install JavaScript and native dependencies
         run: npm install --no-audit --no-fund
 
+      - name: Bundle artifact libraries
+        run: npm run prepare-artifact-runtime
+
       - name: Generate Android project
         run: npx expo prebuild --platform android --no-install
-
-      - name: Restrict native build to Pixel 10a ABI
-        run: sed -i 's/^reactNativeArchitectures=.*/reactNativeArchitectures=arm64-v8a/' android/gradle.properties
 
       - name: Build release APK
         run: ./gradlew assembleRelease
