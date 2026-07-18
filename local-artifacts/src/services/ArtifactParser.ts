@@ -27,6 +27,30 @@ export function parseArtifact(content: string): string | null {
   return null;
 }
 
+/** Accumulates streamed model output and emits an artifact once a complete document is available. */
+export class ArtifactStreamDetector {
+  private content = '';
+  private emitted = false;
+
+  reset() {
+    this.content = '';
+    this.emitted = false;
+  }
+
+  append(chunk: string): string | null {
+    if (this.emitted) return null;
+    this.content += chunk;
+    const artifact = parseArtifact(this.content);
+    if (!artifact) return null;
+    this.emitted = true;
+    return artifact;
+  }
+
+  getContent() {
+    return this.content;
+  }
+}
+
 export function inferArtifactTitle(html: string, fallback = 'Interactive artifact') {
   const title = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html)?.[1]?.trim();
   if (title) return title.replace(/\s+/g, ' ').slice(0, 64);
