@@ -26,16 +26,23 @@ const PREVIEW_ERROR_SCRIPT = `
 true;
 `;
 
+function removeConflictingContentSecurityPolicies(html: string) {
+  return html.replace(
+    /<meta\\b(?=[^>]*\\bhttp-equiv\\s*=\\s*["']?Content-Security-Policy["']?)[^>]*>/gi,
+    '',
+  );
+}
+
 export function ArtifactRenderer({ htmlContent, theme }: { htmlContent: string; theme: AppTheme }) {
   const webViewRef = useRef<any>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
 
   const source = useMemo(() => {
     const headAdditions = `<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-      <meta http-equiv="Content-Security-Policy" content="default-src 'none'; base-uri 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; font-src 'none';">
-      <style>html,body{margin:0;min-height:100%;background:${theme.background};color:${theme.text};}*{box-sizing:border-box}button,input,select{font:inherit}body{font-family:system-ui,-apple-system,sans-serif;padding:14px}</style>
+      <meta http-equiv="Content-Security-Policy" content="default-src 'none'; base-uri 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval' data:; style-src 'self' 'unsafe-inline' data:; img-src data: blob:; connect-src 'none'; font-src data:; form-action 'none';">
+      <style>html,body{margin:0;min-height:100%;background:${theme.background};color:${theme.text};}*{box-sizing:border-box}button,input,select,textarea{font:inherit}body{font-family:system-ui,-apple-system,sans-serif;padding:14px}</style>
       <script>${ARTIFACT_RUNTIME}</script>`;
-    const trimmed = htmlContent.trim();
+    const trimmed = removeConflictingContentSecurityPolicies(htmlContent.trim());
     if (/<html[\\s>]/i.test(trimmed)) {
       if (/<head[\\s>]/i.test(trimmed)) return trimmed.replace(/<head([^>]*)>/i, (match) => `${match}${headAdditions}`);
       return trimmed.replace(/<html([^>]*)>/i, (match) => `${match}<head>${headAdditions}</head>`);
