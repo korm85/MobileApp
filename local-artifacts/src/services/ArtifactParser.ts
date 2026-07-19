@@ -1,7 +1,7 @@
 import { Artifact } from '../types';
 
-const OPEN_TAG = /<pm-artifact(?:\s+title=(?:"([^"]*)"|'([^']*)'))?\s*>/i;
-const CLOSE_TAG = '</pm-artifact>';
+const OPEN_TAG = /<pm-artifact\b([^>]*)>/i;
+const CLOSE_TAG = /<\/pm-artifact\s*>/i;
 
 function normalizeHtml(value: string) {
   const html = value.trim();
@@ -13,24 +13,70 @@ function isValidArtifactHtml(value: string) {
   return /<!doctype\s+html/i.test(value) || /<html[\s>]/i.test(value) || /<(?:main|body|section|canvas|div)[\s>]/i.test(value);
 }
 
+function titleFromAttributes(attributes: string) {
+  const match = /\btitle\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(attributes);
+  return (match?.[1] || match?.[2] || '').trim();
+}
+
 export type ParsedArtifact = { title: string; html: string };
 
-/** The only artifact signal accepted by the app. Raw HTML and Markdown fences are deliberately ignored. */
+function parsed(title: string, html: string): ParsedArtifact | null {
+  const candidate = html.trim();
+  if (!candidate || !isValidArtifactHtml(candidate)) return null;
+  return {
+    title: title.trim().slice(0, 64) || inferArtifactTitle(candidate),
+    html: normalizeHtml(candidate),
+  };
+}
+
+/**
+ * The preferred artifact signal. Attribute spacing and additional attributes are tolerated,
+ * because local models do not always reproduce the envelope byte-for-byte.
+ */
 export function parseArtifactProtocol(content: string): ParsedArtifact | null {
   const open = OPEN_TAG.exec(content);
   if (!open) return null;
-  const closeIndex = content.indexOf(CLOSE_TAG, (open.index ?? 0) + open[0].length);
-  if (closeIndex < 0) return null;
-  const html = content.slice((open.index ?? 0) + open[0].length, closeIndex).trim();
-  if (!html || !isValidArtifactHtml(html)) return null;
-  return { title: (open[1] || open[2] || inferArtifactTitle(html)).trim().slice(0, 64) || 'Interactive artifact', html: normalizeHtml(html) };
+  const close = CLOSE_TAG.exec(content.slice((open.index || 0) + open[0].length));
+  if (!close || close.index === undefined) return null;
+  const html = content.slice(
+    (open.index || 0) + open[0].length,
+    (open.index || 0) + open[0].length + close.index,
+  );
+  return parsed(titleFromAttributes(open[1] || '') || inferArtifactTitle(html), html);
+}
+
+/**
+ * Canvas mode is intentionally forgiving. If the model emits a complete HTML document
+ * or wraps it in a Markdown fence instead of the protocol, it is still an artifact.
+ */
+export function parseArtifactResponse(content: string, allowRawHtml = false): ParsedArtifact | null {
+  const protocol = parseArtifactProtocol(content);
+  if (protocol) return protocol;
+  if (!allowRawHtml) return null;
+
+  let candidate = content.trim()
+    .replace(/^\s*```(?:html|htm)?\s*/i, '')
+    .replace(/\s*```\s*$/i, '')
+    .trim();
+
+  const doctypeIndex = candidate.search(/<!doctype\s+html/i);
+  const htmlIndex = candidate.search(/<html\b/i);
+  const start = doctypeIndex >= 0 ? doctypeIndex : htmlIndex;
+  if (start >= 0) {
+    candidate = candidate.slice(start);
+    const end = candidate.search(/<\/html\s*>/i);
+    if (end >= 0) candidate = candidate.slice(0, end + candidate.slice(end).match(/<\/html\s*>/i)![0].length);
+  } else if (!/^<(?:main|body|section|canvas|div)\b/i.test(candidate)) {
+    return null;
+  }
+
+  return parsed(inferArtifactTitle(candidate), candidate);
 }
 
 export function stripArtifactProtocol(content: string) {
-  return content.replace(/<pm-artifact(?:\s+title=(?:"[^"]*"|'[^']*'))?\s*>[\s\S]*?<\/pm-artifact>/gi, '').trim();
+  return content.replace(/<pm-artifact\b[^>]*>[\s\S]*?<\/pm-artifact\s*>/gi, '').trim();
 }
 
-/** Accumulates output and emits exactly once after a complete protocol envelope arrives. */
 export class ArtifactStreamDetector {
   private content = '';
   private emitted = false;
