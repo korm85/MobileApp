@@ -23,7 +23,7 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { ArtifactRenderer } from './src/components/ArtifactRenderer';
 import { DEFAULT_CHAT_CONTROLS, DEFAULT_GENERATION_SETTINGS, DEFAULT_SESSION_ID, MODELS } from './src/constants';
 import { useThrottledStream } from './src/hooks/useThrottledStream';
-import { ArtifactStreamDetector, createArtifact, parseArtifactProtocol, stripArtifactProtocol } from './src/services/ArtifactParser';
+import { ArtifactStreamDetector, createArtifact, parseArtifactProtocol, parseArtifactResponse, stripArtifactProtocol } from './src/services/ArtifactParser';
 import { LlamaService } from './src/services/LlamaService';
 import { downloadModel, getModelPath, modelDefinitionReady, reattachExistingModelDownloads, subscribeModelDownloads } from './src/services/ModelService';
 import { createSession, initializeDatabase, loadActiveSessionId, loadArtifacts, loadGenerationSettings, loadMessages, loadSessions, loadTavilyApiKey, saveActiveSessionId, saveArtifact, saveGenerationSettings, saveMessage, saveTavilyApiKey } from './src/services/StorageService';
@@ -184,9 +184,12 @@ function AppContent() {
       };
       const response = await LlamaService.getInstance().generateResponse(generationPrompt, onToken, history as any, settings, chatSession, media);
       const sources = searchResponse ? formatSourcesForMessage(searchResponse) : '';
-      const parsed = settings.responseMode !== 'chat' ? (parseArtifactProtocol(response) || parseArtifactProtocol(streamedResponse)) : null;
+      const allowRawCanvas = settings.responseMode === 'canvas';
+      const parsed = settings.responseMode !== 'chat'
+        ? (parseArtifactResponse(response, allowRawCanvas) || parseArtifactResponse(streamedResponse, allowRawCanvas))
+        : null;
       if (parsed) await publishArtifact(parsed);
-      const readableResponse = stripArtifactProtocol(response).trim();
+      const readableResponse = parsed ? '' : stripArtifactProtocol(response).trim();
       const finalMessage: Message = { ...assistantMessage, content: (readableResponse || (parsed ? 'Created ' + parsed.title + '.' : 'Done.')) + sources };
       setMessages((current) => current.map((message) => message.id === assistantId ? finalMessage : message));
       await saveMessage(finalMessage);
